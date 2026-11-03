@@ -21,7 +21,7 @@
   <div id="loader">
     <div class="loader-glyph">麻將</div>
     <div class="loader-bar"><span></span></div>
-    <p>Préparation du temple…</p>
+    <p id="loader-text">Préparation du temple…</p>
   </div>
 
   <!-- Menu principal -->
@@ -261,7 +261,20 @@
     </div>
   </div>
 
-  <script src="/vendor/lucide/lucide.min.js"></script>
-  <script type="module" src="/js/main.js"></script>
+  <script>
+    // Si un fichier du jeu ne se charge pas (ex. bibliothèque manquante), on l'affiche au lieu d'attendre sans fin.
+    window.mjLoadFailed = function (why) {
+      var t = document.getElementById('loader-text');
+      if (t) t.innerHTML = 'Le temple n’a pas pu se charger.<br><small>' + why + '</small>';
+      var bar = document.querySelector('.loader-bar');
+      if (bar) bar.style.display = 'none';
+    };
+    window.mjLoadTimer = setTimeout(function () {
+      if (document.getElementById('loader')) window.mjLoadFailed('Chargement trop long : vérifie ta connexion puis recharge la page.');
+    }, 30000);
+  </script>
+  <script src="/config.js"></script>
+  <script src="/vendor/lucide/lucide.min.js" defer onerror="mjLoadFailed('Icônes introuvables (/vendor/lucide). As-tu lancé « npm run build » ?')"></script>
+  <script type="module" src="/js/main.js" onerror="mjLoadFailed('Code du jeu ou Three.js introuvable (/vendor/three). As-tu lancé « npm run build » ?')"></script>
 </body>
 </html>

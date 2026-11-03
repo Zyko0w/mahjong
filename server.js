@@ -1,24 +1,26 @@
-// Mahjong 3D — serveur HTTP statique + API classement (fichier JSON) + WebSocket duel
+// Mahjong 3D — serveur Node : fichiers du jeu + API classement (fichier JSON) + duel en WebSocket.
+// En local il fait tout. En production avec Vercel, il sert uniquement de serveur de duel
+// (Railway, Render…) et envoie les résultats au classement Vercel (voir README).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { LAYOUTS as LAYOUT_DEFS } from './public/js/layouts.js';
+import { LAYOUTS, emptyBoard, normalizeBoard, cleanPseudo, parseScore, submitSolo, recordDuel, publicBoard } from './lib/leaderboard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const THREE_DIR = path.join(__dirname, 'node_modules', 'three');
 const LUCIDE_DIR = path.join(__dirname, 'node_modules', 'lucide', 'dist', 'umd');
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const BOARD_FILE = path.join(DATA_DIR, 'leaderboard.json');
-const LAYOUTS = Object.keys(LAYOUT_DEFS);
-// Une catégorie de classement par forme et par difficulté : 'chat' (normal), 'chat_hc' (hardcore)
-const CATEGORIES = LAYOUTS.flatMap((l) => [l, l + '_hc']);
-const HARDCORE_SHUFFLES = 2;
-const MAX_ENTRIES = 100;
+// Mode « serveur de duel » : les résultats partent vers le classement du site Vercel
+const LEADERBOARD_URL = (process.env.LEADERBOARD_URL || '').replace(/\/+$/, '');
+const DUEL_SECRET = process.env.DUEL_SECRET || '';
+// Sites autorisés à se connecter au duel (ex. https://mon-mahjong.vercel.app), séparés par des virgules
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -40,17 +42,10 @@ const MIME = {
   '.flac': 'audio/flac',
 };
 
-// ---------------------------------------------------------------- classement
-function emptyBoard() {
-  const b = { duel: {} };
-  for (const c of CATEGORIES) b[c] = [];
-  return b;
-}
-
+// ---------------------------------------------------------------- classement (fichier local)
 function loadBoard() {
   try {
-    const data = JSON.parse(fs.readFileSync(BOARD_FILE, 'utf8'));
-    return { ...emptyBoard(), ...data };
+    return normalizeBoard(JSON.parse(fs.readFileSync(BOARD_FILE, 'utf8')));
   } catch {
     return emptyBoard();
   }
@@ -69,64 +64,23 @@ function saveBoard() {
   }, 200);
 }
 
-function cleanPseudo(raw) {
-  if (typeof raw !== 'string') return null;
-  const p = raw.normalize('NFC').replace(/[^\p{L}\p{N} _\-.]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 16);
-  return p.length >= 2 ? p : null;
-}
-
-function sortSolo(list) {
-  list.sort((a, b) => b.score - a.score || a.time - b.time || a.date - b.date);
-}
-
-function submitSolo({ pseudo, layout, time, moves, score, hints, shuffles }) {
-  const list = board[layout];
-  const entry = {
-    pseudo,
-    time: Math.round(time * 10) / 10,
-    moves,
-    score,
-    hints,
-    shuffles,
-    date: Date.now(),
-  };
-  const key = pseudo.toLowerCase();
-  const idx = list.findIndex((e) => e.pseudo.toLowerCase() === key);
-  let improved = true;
-  if (idx >= 0) {
-    const old = list[idx];
-    if (old.score > score || (old.score === score && old.time <= entry.time)) improved = false;
-    else list.splice(idx, 1);
+// Résultat de duel : vers le classement Vercel si configuré, sinon dans le fichier local
+async function reportDuel(winner, loser, time) {
+  if (LEADERBOARD_URL && DUEL_SECRET) {
+    try {
+      const r = await fetch(LEADERBOARD_URL + '/api/duel-result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DUEL_SECRET },
+        body: JSON.stringify({ winner, loser, time }),
+      });
+      if (!r.ok) console.warn('duel-result refusé :', r.status, await r.text());
+    } catch (e) {
+      console.warn('duel-result injoignable :', e.message);
+    }
+    return;
   }
-  if (improved) list.push(entry);
-  sortSolo(list);
-  if (list.length > MAX_ENTRIES) list.length = MAX_ENTRIES;
+  recordDuel(board, winner, loser, time);
   saveBoard();
-  const rank = list.findIndex((e) => e.pseudo.toLowerCase() === key) + 1;
-  return { rank: rank || null, improved };
-}
-
-function recordDuel(winner, loser, time) {
-  for (const [name, won] of [[winner, true], [loser, false]]) {
-    const key = name.toLowerCase();
-    const s = board.duel[key] || { pseudo: name, wins: 0, losses: 0, best: null };
-    s.pseudo = name;
-    if (won) {
-      s.wins++;
-      if (time && (s.best === null || time < s.best)) s.best = Math.round(time * 10) / 10;
-    } else s.losses++;
-    board.duel[key] = s;
-  }
-  saveBoard();
-}
-
-function publicBoard() {
-  const duel = Object.values(board.duel)
-    .sort((a, b) => b.wins - a.wins || a.losses - b.losses || (a.best ?? 1e9) - (b.best ?? 1e9))
-    .slice(0, 50);
-  const out = { duel };
-  for (const c of CATEGORIES) out[c] = (board[c] || []).slice(0, 50);
-  return out;
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -176,7 +130,13 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = decodeURIComponent(url.pathname);
 
-  if (p === '/api/leaderboard' && req.method === 'GET') return sendJSON(res, 200, publicBoard());
+  if (p === '/api/leaderboard' && req.method === 'GET') return sendJSON(res, 200, publicBoard(board));
+  if (p === '/health') return sendJSON(res, 200, { ok: true, rooms: rooms.size });
+  // Configuration du client (équivalent du fichier généré par « npm run build » pour Vercel)
+  if (p === '/config.js') {
+    res.writeHead(200, { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-store' });
+    return res.end('window.MJ_CONFIG = ' + JSON.stringify({ duelServer: process.env.DUEL_SERVER_URL || '' }) + ';\n');
+  }
 
   if (p === '/api/score' && req.method === 'POST') {
     const ip = req.socket.remoteAddress || '?';
@@ -190,21 +150,10 @@ const server = http.createServer((req, res) => {
     });
     req.on('end', () => {
       try {
-        const d = JSON.parse(body);
-        const pseudo = cleanPseudo(d.pseudo);
-        const layout = LAYOUTS.includes(d.layout) ? d.layout : null;
-        const time = Number(d.time);
-        const moves = Math.floor(Number(d.moves));
-        const score = Math.floor(Number(d.score));
-        const hints = Math.max(0, Math.floor(Number(d.hints) || 0));
-        const shuffles = Math.max(0, Math.floor(Number(d.shuffles) || 0));
-        if (!pseudo || !layout) throw new Error('pseudo/layout');
-        if (!(time >= 15 && time < 36000)) throw new Error('time');
-        if (!(moves >= 1 && moves < 5000)) throw new Error('moves');
-        if (!(score >= 0 && score <= 30000)) throw new Error('score');
-        const hardcore = d.hardcore === true;
-        if (hardcore && (hints > 0 || shuffles > HARDCORE_SHUFFLES)) throw new Error('hardcore');
-        sendJSON(res, 200, submitSolo({ pseudo, layout: hardcore ? layout + '_hc' : layout, time, moves, score, hints, shuffles }));
+        const entry = parseScore(JSON.parse(body));
+        const result = submitSolo(board, entry);
+        saveBoard();
+        sendJSON(res, 200, result);
       } catch (e) {
         sendJSON(res, 400, { error: 'Données invalides' });
       }
@@ -219,7 +168,11 @@ const server = http.createServer((req, res) => {
 });
 
 // ---------------------------------------------------------------- Duel (WebSocket)
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  verifyClient: ({ origin }) => !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(String(origin || '').replace(/\/+$/, '')),
+});
 const rooms = new Map();
 const quickQueue = {}; // clé : forme + difficulté
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -276,7 +229,7 @@ function finishRoom(room, winner, loser, reason) {
   if (room.state !== 'playing') return;
   room.state = 'done';
   const time = Math.max(0, (Date.now() - room.startAt) / 1000);
-  recordDuel(winner.pseudo, loser.pseudo, reason === 'finished' ? time : null);
+  reportDuel(winner.pseudo, loser.pseudo, reason === 'finished' ? time : null);
   send(winner, { type: 'result', result: 'win', reason, time, winner: winner.pseudo });
   send(loser, { type: 'result', result: 'lose', reason, time, winner: winner.pseudo });
 }
@@ -398,5 +351,8 @@ setInterval(() => {
 }, 30000);
 
 server.listen(PORT, () => {
-  console.log(`\n  🀄  Mahjong 3D prêt : http://localhost:${PORT}\n`);
+  console.log(`\n  🀄  Mahjong 3D prêt : http://localhost:${PORT}`);
+  if (LEADERBOARD_URL) console.log(`  Résultats de duel envoyés à ${LEADERBOARD_URL}${DUEL_SECRET ? '' : ' (DUEL_SECRET manquant !)'}`);
+  if (ALLOWED_ORIGINS.length) console.log(`  Origines autorisées : ${ALLOWED_ORIGINS.join(', ')}`);
+  console.log('');
 });

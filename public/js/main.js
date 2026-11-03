@@ -504,7 +504,7 @@ async function victory() {
     if (!res.ok) throw new Error(data.error);
     setRank(data.improved ? `Classé n°${data.rank} en ${L.name}${S.hc ? ' Hardcore' : ''} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
   } catch (e) {
-    $('#end-rank').textContent = "Impossible d'enregistrer le score (serveur injoignable).";
+    setRank(e.message && !/fetch|JSON/i.test(e.message) ? 'Score non enregistré : ' + e.message : "Impossible d'enregistrer le score (serveur injoignable).", 'info');
   }
 }
 
@@ -557,9 +557,13 @@ async function showBoard(cat = 'overview', hc = BOARD.hc) {
   buildBoardCats();
   $('#board-table').innerHTML = '<tr><td class="empty">Chargement…</td></tr>';
   try {
-    boardCache = await (await fetch('/api/leaderboard')).json();
-  } catch {
+    const r = await fetch('/api/leaderboard');
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Classement indisponible (' + r.status + ').');
+    boardCache = data;
+  } catch (e) {
     boardCache = null;
+    BOARD.error = e.message && !/fetch|JSON/i.test(e.message) ? e.message : 'Serveur injoignable.';
   }
   buildBoardCats();
   renderBoard();
@@ -619,7 +623,13 @@ function renderBoard() {
   $('#board-wrap').classList.toggle('hidden', overview);
   if (!boardCache) {
     $('#board-wrap').classList.remove('hidden');
-    $('#board-table').innerHTML = '<tr><td class="empty">Serveur injoignable.</td></tr>';
+    $('#board-table').innerHTML = '';
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.className = 'empty';
+    td.textContent = BOARD.error || 'Serveur injoignable.';
+    tr.appendChild(td);
+    $('#board-table').appendChild(tr);
     refreshIcons();
     return;
   }
@@ -709,6 +719,12 @@ function renderTable(key, isDuel) {
 
 // ================================================================ duel
 const duel = new DuelClient(onDuelMessage, (st) => {
+  // Connexion impossible ou coupée pendant l'attente dans le salon
+  if ((st === 'error' || st === 'closed') && !$('#m-duel').classList.contains('hidden') && !(S.mode === 'duel' && S.game && !S.ended)) {
+    duelReset();
+    S.duel.inRoom = false;
+    $('#duel-error').textContent = 'Serveur de duel injoignable. Réessaie dans un instant (un serveur gratuit peut mettre ~30 s à se réveiller).';
+  }
   if (st === 'closed' && S.duel.inRoom) {
     S.duel.inRoom = false;
     if (S.mode === 'duel' && !S.ended) {
@@ -1051,7 +1067,11 @@ function bindUI() {
 async function init() {
   refreshIcons();
   sound.onTrack = (title) => { if (sound.musicOn && !sound.muted) toast(title, false, 'music', 'music'); };
+  const step = (t) => { const el = $('#loader-text'); if (el) el.textContent = t; };
+  step('Chargement des calligraphies…');
   await loadFaceFonts();
+  step('Construction du temple…');
+  await new Promise((r) => requestAnimationFrame(r));
   scene = new Scene3D($('#stage'), {
     onTileClick,
     onTileHover: (id) => {
@@ -1063,10 +1083,14 @@ async function init() {
   });
   bindUI();
   showMenu();
+  clearTimeout(window.mjLoadTimer);
   $('#loader').classList.add('fade');
   setTimeout(() => $('#loader').remove(), 900);
   const code = new URLSearchParams(location.search).get('duel');
   if (code) openDuel(code.toUpperCase().slice(0, 4));
 }
 
-init();
+init().catch((e) => {
+  console.error(e);
+  window.mjLoadFailed && window.mjLoadFailed('Erreur au démarrage : ' + e.message);
+});

@@ -5,13 +5,18 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-vendor.mjs",
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "license": "ISC",
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
     "lucide": "^1.67.0",
     "three": "^0.187.0",
     "ws": "^8.22.1"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

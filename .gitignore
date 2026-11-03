@@ -25,3 +25,7 @@ desktop.ini
 # Outils locaux
 .claude/
 graphify-out/
+
+# Bibliothèques copiées au build (npm run build)
+public/vendor/
+public/config.js

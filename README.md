@@ -11,6 +11,40 @@ npm start
 
 Ensuite, ouvre http://localhost:3000. Pour un duel entre deux PC du même réseau, utilise l'IP locale de la machine qui fait tourner le serveur (ex. `http://192.168.1.20:3000`). Le port se change avec la variable `PORT`.
 
+En local, `server.js` fait tout : il sert le jeu, le classement (fichier `data/leaderboard.json`) et le duel.
+
+## Mettre en ligne : Vercel + serveur de duel
+
+Vercel n'héberge que des fichiers statiques et des fonctions courtes. Il ne peut donc pas faire tourner le serveur de duel (WebSocket permanent), ni écrire le fichier du classement. Le déploiement se fait donc en deux parties :
+
+| Partie | Hébergement | Rôle |
+|---|---|---|
+| Site + classement | **Vercel** | le jeu (`public/`), les fonctions `api/` (classement), le fichier JSON du classement dans **Vercel Blob** |
+| Duel | **Railway** ou **Render** | `server.js` (WebSocket), qui envoie le résultat de chaque duel au classement Vercel |
+
+### 1. Vercel (site + classement)
+
+1. Importe le dépôt GitHub dans Vercel. Le fichier `vercel.json` règle tout : build `npm run build`, dossier `public`.
+   `npm run build` copie Three.js et Lucide dans `public/vendor` (sans ça, le site reste bloqué sur « Préparation du temple… »).
+2. Dans le projet Vercel, va dans **Storage → Create → Blob**, crée le store et connecte-le au projet. Vercel ajoute alors tout seul la variable `BLOB_READ_WRITE_TOKEN`. Le store peut être privé ou public, le code s'adapte.
+3. Dans **Settings → Environment Variables**, ajoute :
+   - `DUEL_SECRET` : une longue phrase secrète inventée, à mettre aussi sur le serveur de duel ;
+   - `DUEL_SERVER_URL` : l'adresse du serveur de duel (étape 2), par ex. `wss://mahjong-duel.up.railway.app/ws`.
+4. Redéploie : `DUEL_SERVER_URL` est lue au moment du build.
+
+### 2. Railway ou Render (serveur de duel)
+
+Crée un service web Node à partir du même dépôt, avec la commande de démarrage `npm start`. Ajoute ces variables :
+
+| Variable | Exemple | Rôle |
+|---|---|---|
+| `LEADERBOARD_URL` | `https://mon-mahjong.vercel.app` | où envoyer les résultats de duel |
+| `DUEL_SECRET` | la même phrase que sur Vercel | prouve que les résultats viennent bien de ton serveur |
+| `ALLOWED_ORIGINS` | `https://mon-mahjong.vercel.app` | seul ton site peut se connecter au duel (plusieurs adresses : séparées par des virgules) |
+
+`PORT` est fourni automatiquement par l'hébergeur. L'adresse `https://…/health` permet de vérifier que le serveur tourne.
+Les offres gratuites de Render mettent le serveur en veille après 15 minutes d'inactivité : le premier duel peut alors attendre environ 30 secondes qu'il se réveille.
+
 ## Contenu
 
 - **Solo** : 10 plateaux. Il y a les classiques (la Tortue, la Forteresse, la Pyramide) et des formes rigolotes : Chat, Papillon, Cœur, Fusée, Crabe, Smiley et Dragon. Chaque donne a toujours une solution.

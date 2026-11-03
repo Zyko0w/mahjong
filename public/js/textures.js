@@ -12,7 +12,7 @@ export async function loadFaceFonts() {
   try {
     await Promise.race([
       document.fonts.load(`900 100px "Noto Serif SC"`, '一二三四五六七八九萬東南西北中發梅蘭菊竹春夏秋冬'),
-      new Promise((r) => setTimeout(r, 3000)),
+      new Promise((r) => setTimeout(r, 2000)),
     ]);
   } catch { /* polices système en secours */ }
 }
