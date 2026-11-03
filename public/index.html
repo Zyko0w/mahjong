@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Mahjong 3D · Le Temple des Tuiles</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='12' y='4' width='76' height='92' rx='14' fill='%23f4ead2'/><text x='50' y='72' font-size='62' text-anchor='middle' fill='%23b81f2a' font-family='serif'>中</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Inter:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div class="vignette"></div>
+
+  <!-- Chargement -->
+  <div id="loader">
+    <div class="loader-glyph">麻將</div>
+    <div class="loader-bar"><span></span></div>
+    <p>Préparation du temple…</p>
+  </div>
+
+  <!-- Menu principal -->
+  <section id="menu" class="screen hidden">
+    <div class="menu-card">
+      <div class="brand">
+        <div class="brand-glyph">麻將</div>
+        <h1>Mahjong</h1>
+        <p class="tagline">Le Temple des Tuiles</p>
+      </div>
+
+      <label class="field">
+        <span>Ton pseudo</span>
+        <input id="pseudo" type="text" maxlength="16" placeholder="Ex : DragonRouge" autocomplete="off" spellcheck="false" />
+      </label>
+
+      <div class="field">
+        <span>Disposition</span>
+        <div class="layout-grid" id="layout-select"></div>
+        <div class="layout-info" id="layout-info"></div>
+      </div>
+
+      <div class="field">
+        <span>Difficulté</span>
+        <div class="segmented" id="difficulty-select">
+          <button data-diff="normal"><b><i data-lucide="leaf"></i> Normal</b><small>Indices et mélanges libres</small></button>
+          <button data-diff="hardcore"><b><i data-lucide="skull"></i> Hardcore</b><small>Aucun indice · 2 mélanges · score ×1,5</small></button>
+        </div>
+      </div>
+
+      <div class="menu-actions">
+        <button class="btn primary big" id="btn-solo">
+          <i data-lucide="play"></i> Jouer en solo
+        </button>
+        <button class="btn jade big" id="btn-duel">
+          <i data-lucide="swords"></i> Duel en direct
+        </button>
+        <div class="row">
+          <button class="btn ghost" id="btn-board"><i data-lucide="trophy"></i> Classement</button>
+          <button class="btn ghost" id="btn-rules"><i data-lucide="scroll-text"></i> Règles</button>
+        </div>
+      </div>
+
+      <div class="settings">
+        <div class="volume-row" data-vol="music"><i data-lucide="music"></i><span>Musique</span><input type="range" min="0" max="100" step="1" /><em>55 %</em></div>
+        <div class="volume-row" data-vol="sfx"><i data-lucide="audio-lines"></i><span>Effets</span><input type="range" min="0" max="100" step="1" /><em>90 %</em></div>
+        <label class="toggle"><input type="checkbox" id="opt-assist" checked /><span></span>Assombrir les tuiles bloquées</label>
+      </div>
+      <p class="menu-error" id="menu-error"></p>
+    </div>
+  </section>
+
+  <!-- HUD en jeu -->
+  <section id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="stats">
+        <div class="stat"><small>Temps</small><b id="h-time">00:00</b></div>
+        <div class="stat"><small>Coups</small><b id="h-moves">0</b></div>
+        <div class="stat"><small>Tuiles</small><b id="h-tiles">144</b></div>
+        <div class="stat"><small>Paires jouables</small><b id="h-pairs">0</b></div>
+      </div>
+      <div class="score-box">
+        <small>Score</small>
+        <b id="h-score">0</b>
+        <div class="combo" id="h-combo"></div>
+      </div>
+      <div class="duel-panel hidden" id="duel-panel">
+        <div class="duelist me">
+          <div class="name"><span id="d-me-name">Moi</span><em id="d-me-left">144</em></div>
+          <div class="bar"><span id="d-me-bar"></span></div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="duelist opp">
+          <div class="name"><span id="d-opp-name">Adversaire</span><em id="d-opp-left">144</em></div>
+          <div class="bar"><span id="d-opp-bar"></span></div>
+        </div>
+        <div class="emotes" id="emotes">
+          <button data-emote="wave" title="Salut"><i data-lucide="hand"></i></button><button data-emote="fire" title="En feu"><i data-lucide="flame"></i></button><button data-emote="laugh" title="Haha"><i data-lucide="laugh"></i></button><button data-emote="angry" title="Grr"><i data-lucide="angry"></i></button><button data-emote="zap" title="Éclair"><i data-lucide="zap"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="selected-info" id="selected-info"></div>
+    <div class="toolbar">
+      <button class="tool" id="t-hint" title="Indice (H)"><span><i data-lucide="lightbulb"></i></span><small>Indice</small></button>
+      <button class="tool" id="t-shuffle" title="Mélanger (M)"><span><i data-lucide="shuffle"></i><b class="badge hidden" id="shuffle-left">2</b></span><small>Mélanger</small></button>
+      <button class="tool" id="t-undo" title="Annuler (Z)"><span><i data-lucide="undo-2"></i></span><small>Annuler</small></button>
+      <button class="tool" id="t-cam" title="Recentrer la caméra (C)"><span><i data-lucide="video"></i></span><small>Caméra</small></button>
+      <button class="tool" id="t-sound" title="Son (S)"><span id="t-sound-ico"><i data-lucide="volume-2"></i></span><small>Son</small></button>
+      <button class="tool" id="t-pause" title="Pause (Échap)"><span><i data-lucide="pause"></i></span><small>Pause</small></button>
+      <button class="tool danger" id="t-quit" title="Quitter"><span><i data-lucide="x"></i></span><small>Quitter</small></button>
+      <div class="sound-pop hidden" id="sound-pop">
+        <div class="volume-row" data-vol="music"><i data-lucide="music"></i><span>Musique</span><input type="range" min="0" max="100" step="1" /><em>55 %</em></div>
+        <div class="volume-row" data-vol="sfx"><i data-lucide="audio-lines"></i><span>Effets</span><input type="range" min="0" max="100" step="1" /><em>90 %</em></div>
+        <button class="btn ghost small" id="pop-mute"><i data-lucide="volume-x"></i> Couper tout le son</button>
+      </div>
+    </div>
+    <div class="hardcore-tag hidden" id="hardcore-tag"><i data-lucide="skull"></i> Hardcore</div>
+    <p class="controls-help">Clic gauche : choisir · Glisser : tourner · Molette : zoom · Clic droit : déplacer</p>
+  </section>
+
+  <!-- Transition de début de partie -->
+  <div id="transition" class="hidden" aria-hidden="true">
+    <div class="tr-panel left"><div class="tr-name" id="tr-left-name"></div></div>
+    <div class="tr-panel right"><div class="tr-name" id="tr-right-name"></div></div>
+    <div class="tr-slash"></div>
+    <div class="tr-flash"></div>
+    <div class="tr-content">
+      <div class="tr-seal" id="tr-glyph">始</div>
+      <div class="tr-title" id="tr-title"></div>
+      <div class="tr-sub" id="tr-sub"></div>
+    </div>
+  </div>
+
+  <div id="countdown" class="hidden"></div>
+  <div id="toasts"></div>
+  <div id="now-playing"></div>
+  <div id="floaters"></div>
+
+  <!-- Duel lobby -->
+  <div class="modal hidden" id="m-duel">
+    <div class="modal-card">
+      <button class="close" data-close><i data-lucide="x"></i></button>
+      <h2><i data-lucide="swords"></i> Duel en direct</h2>
+      <p class="sub">Même donne pour les deux joueurs. Le premier qui vide le plateau gagne !</p>
+      <div class="duel-options" id="duel-options">
+        <div class="duel-opt">
+          <h3>Créer un salon</h3>
+          <p>Partage le code avec ton adversaire.</p>
+          <button class="btn primary" id="d-create"><i data-lucide="plus"></i> Créer</button>
+        </div>
+        <div class="duel-opt">
+          <h3>Rejoindre</h3>
+          <input id="d-code" maxlength="4" placeholder="CODE" autocomplete="off" />
+          <button class="btn jade" id="d-join"><i data-lucide="log-in"></i> Rejoindre</button>
+        </div>
+        <div class="duel-opt">
+          <h3>Partie rapide</h3>
+          <p>Affronte le prochain joueur disponible.</p>
+          <button class="btn ghost" id="d-quick"><i data-lucide="search"></i> Chercher</button>
+        </div>
+      </div>
+      <div class="duel-wait hidden" id="duel-wait">
+        <div class="spinner"></div>
+        <p id="duel-wait-text">En attente d'un adversaire…</p>
+        <div class="room-code hidden" id="room-code-box">
+          <small>Code du salon</small>
+          <b id="room-code">----</b>
+          <button class="btn ghost small" id="d-copy"><i data-lucide="copy"></i> Copier le lien d'invitation</button>
+        </div>
+        <button class="btn ghost" id="d-cancel">Annuler</button>
+      </div>
+      <p class="menu-error" id="duel-error"></p>
+    </div>
+  </div>
+
+  <!-- Classement -->
+  <div class="modal hidden" id="m-board">
+    <div class="modal-card wide">
+      <button class="close" data-close><i data-lucide="x"></i></button>
+      <h2><i data-lucide="trophy"></i> Classement</h2>
+      <div class="board-layout">
+        <nav class="board-cats" id="board-cats"></nav>
+        <div class="board-main">
+          <div class="board-head">
+            <h3 id="board-title"></h3>
+            <div class="tabs small" id="board-diff">
+              <button data-diff="normal" class="active"><i data-lucide="leaf"></i> Normal</button>
+              <button data-diff="hardcore"><i data-lucide="skull"></i> Hardcore</button>
+            </div>
+          </div>
+          <div id="board-overview" class="board-overview hidden"></div>
+          <div class="board-wrap" id="board-wrap"><table class="board" id="board-table"></table></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Règles -->
+  <div class="modal hidden" id="m-rules">
+    <div class="modal-card">
+      <button class="close" data-close><i data-lucide="x"></i></button>
+      <h2><i data-lucide="scroll-text"></i> Règles du Mahjong solitaire</h2>
+      <ul class="rules">
+        <li><b>But :</b> retirer toutes les tuiles du plateau, par paires identiques.</li>
+        <li><b>Tuile libre :</b> aucune tuile posée dessus, et son côté gauche <i>ou</i> droit est dégagé.</li>
+        <li><b>Paires :</b> deux tuiles identiques. Exception : n'importe quelle <b>Fleur</b> s'associe à une autre Fleur, et n'importe quelle <b>Saison</b> à une autre Saison.</li>
+        <li><b>Combo :</b> enchaîne les paires en moins de 5 secondes pour multiplier tes points (jusqu'à ×5).</li>
+        <li><b>Score :</b> points des paires + bonus de fin + bonus de temps. Indice −30, mélange −80, annulation −20.</li>
+        <li><b>Bloqué ?</b> Le mélange redistribue les tuiles restantes en garantissant une solution.</li>
+        <li><b>Duel :</b> même donne pour les deux, le premier à vider le plateau l'emporte.</li>
+        <li><b>Hardcore :</b> aucun indice et seulement 2 mélanges. Si tu restes bloqué, c'est perdu ! En échange, le score final est multiplié par 1,5 et compte dans un classement à part.</li>
+      </ul>
+      <div class="keys">
+        <span><kbd>H</kbd> Indice</span><span><kbd>M</kbd> Mélanger</span><span><kbd>Z</kbd> Annuler</span><span><kbd>C</kbd> Caméra</span><span><kbd>Échap</kbd> Pause</span>
+      </div>
+      <h3 class="credits-title"><i data-lucide="music"></i> Crédits musique</h3>
+      <ul class="credits" id="music-credits"></ul>
+      <p class="credits">Bruitages (cri, katana, gongs) : ihitokage, nekoninja, Qat, pumodi, bendavisdrumguy — <a href="https://freesound.org" target="_blank" rel="noopener">Freesound</a>, CC0.</p>
+    </div>
+  </div>
+
+  <!-- Fin de partie -->
+  <div class="modal hidden" id="m-end">
+    <div class="modal-card">
+      <div class="end-glyph" id="end-glyph">勝</div>
+      <h2 id="end-title">Victoire !</h2>
+      <p class="sub" id="end-sub"></p>
+      <div class="end-stats" id="end-stats"></div>
+      <p class="end-rank" id="end-rank"></p>
+      <div class="row center" id="end-actions"></div>
+    </div>
+  </div>
+
+  <!-- Plus de coups -->
+  <div class="modal hidden" id="m-stuck">
+    <div class="modal-card">
+      <h2>Plus aucun coup possible</h2>
+      <p class="sub">Les tuiles libres restantes ne forment aucune paire.</p>
+      <div class="row center">
+        <button class="btn primary" id="s-shuffle"><i data-lucide="shuffle"></i> Mélanger</button>
+        <button class="btn ghost" id="s-undo"><i data-lucide="undo-2"></i> Annuler un coup</button>
+        <button class="btn ghost" id="s-quit">Abandonner</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pause -->
+  <div class="modal hidden" id="m-pause">
+    <div class="modal-card">
+      <h2><i data-lucide="pause"></i> Pause</h2>
+      <p class="sub">Le plateau est caché pendant la pause.</p>
+      <div class="row center">
+        <button class="btn primary" id="p-resume"><i data-lucide="play"></i> Reprendre</button>
+        <button class="btn ghost" id="p-restart"><i data-lucide="rotate-ccw"></i> Recommencer</button>
+        <button class="btn ghost" id="p-quit"><i data-lucide="house"></i> Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/lucide/lucide.min.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

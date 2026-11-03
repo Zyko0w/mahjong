@@ -1,0 +1,1072 @@
+// Contrôleur principal : menus, partie, score, classement, duel.
+import { Scene3D } from './scene.js';
+import { MahjongGame, LAYOUTS, FACE_NAMES } from './game.js';
+import { Sound } from './audio.js';
+import { DuelClient } from './net.js';
+import { loadFaceFonts } from './textures.js';
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const sound = new Sound();
+let scene;
+
+const PENALTY = { hint: 30, shuffle: 80, undo: 20 };
+const COMBO_WINDOW = 5000;
+const DUEL_HINT_COOLDOWN = 10000;
+const HARDCORE_SHUFFLES = 2;
+const HARDCORE_MULT = 1.5;
+
+const S = {
+  mode: 'solo',
+  layout: LAYOUTS[localStorage.getItem('mj_layout')] ? localStorage.getItem('mj_layout') : 'classic',
+  pseudo: localStorage.getItem('mj_pseudo') || '',
+  assist: localStorage.getItem('mj_assist') !== '0',
+  hardcore: localStorage.getItem('mj_hardcore') === '1', // difficulté choisie dans le menu
+  hc: false, // difficulté de la partie en cours
+  game: null,
+  seed: 0,
+  selected: null,
+  running: false,
+  paused: false,
+  busy: false,
+  pending: 0,
+  ended: false,
+  moves: 0, score: 0, combo: 0, lastMatch: 0, hints: 0, shuffles: 0, undos: 0,
+  elapsed: 0, lastTick: 0,
+  duel: { opponent: '', oppRemaining: 0, total: 0, hintReadyAt: 0, quitting: false, inRoom: false, oppLeft: false },
+};
+
+// ================================================================ utilitaires UI
+function fmtTime(sec) {
+  sec = Math.max(0, sec);
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+const EMOTES = { wave: ['hand', 'Salut !'], fire: ['flame', 'En feu !'], laugh: ['laugh', 'Haha !'], angry: ['angry', 'Grrr !'], zap: ['zap', 'Éclair !'] };
+
+function icon(name) {
+  const i = document.createElement('i');
+  i.setAttribute('data-lucide', name);
+  return i;
+}
+
+function refreshIcons() {
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function toast(text, big = false, iconName = null, extraClass = '') {
+  const el = document.createElement('div');
+  el.className = 'toast' + (big ? ' big' : '') + (extraClass ? ' ' + extraClass : '');
+  if (iconName) el.appendChild(icon(iconName));
+  el.appendChild(document.createTextNode(text));
+  $(extraClass === 'music' ? '#now-playing' : '#toasts').appendChild(el);
+  refreshIcons();
+  setTimeout(() => el.remove(), extraClass === "music" ? 5100 : 3100);
+}
+
+function setSoundIcon() {
+  const box = $('#t-sound-ico');
+  box.innerHTML = '';
+  box.appendChild(icon(sound.muted ? 'volume-x' : 'volume-2'));
+  const mute = $('#pop-mute');
+  mute.innerHTML = '';
+  mute.append(icon(sound.muted ? 'volume-2' : 'volume-x'), sound.muted ? ' Réactiver le son' : ' Couper tout le son');
+  refreshIcons();
+}
+
+function floater(text, world, cls = '') {
+  const v = world.clone().project(scene.camera);
+  const el = document.createElement('div');
+  el.className = 'floater ' + cls;
+  el.textContent = text;
+  el.style.left = ((v.x + 1) / 2) * innerWidth + 'px';
+  el.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
+  $('#floaters').appendChild(el);
+  setTimeout(() => el.remove(), 1150);
+}
+
+function openModal(id) {
+  $$('.modal').forEach((m) => m.classList.add('hidden'));
+  if (id) $(id).classList.remove('hidden');
+}
+function closeModals() { openModal(null); }
+
+function showMenu() {
+  closeModals();
+  $('#hud').classList.add('hidden');
+  $('#menu').classList.remove('hidden');
+  $('#countdown').classList.add('hidden');
+  S.running = false;
+  S.ended = true;
+  S.selected = null;
+  document.body.style.cursor = 'default';
+  sound.setTrack('menu');
+  // Plateau de démonstration en fond
+  const demo = new MahjongGame('classic', (Math.random() * 2 ** 31) | 0);
+  S.game = null;
+  scene.buildBoard(demo);
+  scene.setBoardVisible(true);
+  scene.menuCamera();
+}
+
+function validPseudo() {
+  const input = $('#pseudo');
+  const p = input.value.replace(/[^\p{L}\p{N} _\-.]/gu, '').trim().slice(0, 16);
+  if (p.length < 2) {
+    input.classList.remove('invalid');
+    void input.offsetWidth;
+    input.classList.add('invalid');
+    $('#menu-error').textContent = 'Entre un pseudo (2 à 16 caractères) pour jouer.';
+    input.focus();
+    return null;
+  }
+  input.classList.remove('invalid');
+  $('#menu-error').textContent = '';
+  S.pseudo = p;
+  input.value = p;
+  localStorage.setItem('mj_pseudo', p);
+  return p;
+}
+
+// ================================================================ transition de début de partie
+// Les panneaux de laque se ferment, un coup de katana traverse l'écran, le sceau tombe,
+// puis les panneaux s'ouvrent sur la table. Renvoie deux promesses : écran couvert / ouverture.
+function playTransition({ glyph, title, sub, hc = false, duel = false, left = '', right = '' }) {
+  const el = $('#transition');
+  const hold = duel ? 1700 : 1150;
+  el.className = '';
+  void el.offsetWidth;
+  el.classList.toggle('duel', duel);
+  el.classList.toggle('hc', hc);
+  $('#tr-glyph').textContent = glyph;
+  $('#tr-title').textContent = title;
+  $('#tr-sub').textContent = sub;
+  $('#tr-left-name').textContent = left;
+  $('#tr-right-name').textContent = right;
+  sound.init();
+  requestAnimationFrame(() => el.classList.add('closed'));
+  setTimeout(() => {
+    el.classList.add('slash');
+    duel ? sound.startDuel() : sound.startSolo();
+  }, duel ? 260 : 200);
+  setTimeout(() => el.classList.add('stamp'), duel ? 520 : 420);
+  const covered = new Promise((r) => setTimeout(r, 400));
+  const opening = new Promise((r) =>
+    setTimeout(() => {
+      el.classList.add('out');
+      el.classList.remove('closed');
+      r();
+      setTimeout(() => { el.className = 'hidden'; }, 600);
+    }, 400 + hold)
+  );
+  return { covered, opening };
+}
+
+// ================================================================ partie
+async function newGame(layout, seed, mode, hardcore = S.hardcore) {
+  S.mode = mode;
+  S.hc = hardcore;
+  S.layout = layout;
+  S.seed = seed;
+  S.game = new MahjongGame(layout, seed);
+  sound.setTrack(mode);
+  Object.assign(S, { selected: null, running: false, paused: false, busy: true, ended: false, pending: 0, moves: 0, score: 0, combo: 0, lastMatch: 0, hints: 0, shuffles: 0, undos: 0, elapsed: 0 });
+  closeModals();
+  const L = LAYOUTS[layout];
+  const tr = playTransition(
+    mode === 'duel'
+      ? { duel: true, glyph: '戰', title: 'Duel !', sub: `${L.name}${hardcore ? ' · Hardcore' : ''}`, left: S.pseudo, right: S.duel.opponent, hc: hardcore }
+      : { glyph: hardcore ? '死' : '始', title: L.name, sub: hardcore ? 'Hardcore · aucun indice · 2 mélanges' : L.desc, hc: hardcore }
+  );
+  const gameRef = S.game;
+  await tr.covered; // l'écran est couvert : on prépare le plateau sans saccade visible
+  if (S.game !== gameRef) return;
+  $('#menu').classList.add('hidden');
+  $('#hud').classList.remove('hidden');
+  $('#duel-panel').classList.toggle('hidden', mode !== 'duel');
+  $('#t-pause').disabled = mode === 'duel';
+  $('#hardcore-tag').classList.toggle('hidden', !hardcore);
+  $('#selected-info').textContent = '';
+  scene.controls.autoRotate = false;
+  scene.buildBoard(S.game);
+  scene.setBoardVisible(true);
+  refreshBoard();
+  updateHUD();
+  scene.camera.position.set(0, 30, 34); // la caméra plonge vers la table à l'ouverture des panneaux
+  await tr.opening;
+  if (S.game !== gameRef) return;
+  scene.fitCamera(true, 1.8);
+  await scene.intro();
+  if (S.game && S.mode === mode && mode === 'solo' && !S.ended) startClock();
+  S.busy = false;
+}
+
+function startClock() {
+  S.running = true;
+  S.lastTick = performance.now();
+}
+
+function refreshBoard() {
+  const g = S.game;
+  if (!g) return;
+  for (const t of g.tiles) if (g.alive[t.id]) scene.setBlocked(t.id, S.assist && !g.isFree(t.id));
+  const pairs = g.availablePairs().length;
+  $('#h-pairs').textContent = pairs;
+  $('#h-pairs').classList.toggle('zero', pairs === 0 && g.remaining > 0);
+}
+
+function updateHUD() {
+  const g = S.game;
+  if (!g) return;
+  $('#h-time').textContent = fmtTime(S.elapsed);
+  $('#h-moves').textContent = S.moves;
+  $('#h-tiles').textContent = g.remaining;
+  $('#h-score').textContent = S.score;
+  $('#t-undo').disabled = g.history.length === 0;
+  $('#t-hint').disabled = S.hc;
+  $('#t-hint').title = S.hc ? 'Pas d’indice en Hardcore' : 'Indice (H)';
+  const left = HARDCORE_SHUFFLES - S.shuffles;
+  $('#shuffle-left').classList.toggle('hidden', !S.hc);
+  $('#shuffle-left').textContent = Math.max(0, left);
+  $('#t-shuffle').disabled = S.hc && left <= 0;
+  if (S.mode === 'duel') {
+    $('#d-me-name').textContent = S.pseudo;
+    $('#d-me-left').textContent = g.remaining;
+    $('#d-me-bar').style.width = ((g.total - g.remaining) / g.total) * 100 + '%';
+    $('#d-opp-name').textContent = S.duel.opponent;
+    $('#d-opp-left').textContent = S.duel.oppRemaining;
+    $('#d-opp-bar').style.width = ((g.total - S.duel.oppRemaining) / g.total) * 100 + '%';
+  }
+}
+
+function sendProgress() {
+  if (S.mode !== 'duel') return;
+  duel.send({ type: 'progress', remaining: S.game.remaining, total: S.game.total, moves: S.moves, combo: S.combo });
+}
+
+function canPlay() {
+  return S.game && S.running && !S.paused && !S.ended;
+}
+
+function select(id) {
+  if (S.selected !== null) scene.setSelected(S.selected, false);
+  S.selected = id;
+  if (id !== null) {
+    scene.setSelected(id, true);
+    $('#selected-info').textContent = FACE_NAMES[S.game.face(id)] || '';
+  } else $('#selected-info').textContent = '';
+}
+
+function onTileClick(id) {
+  sound.init();
+  if (!canPlay()) return;
+  const g = S.game;
+  if (!g.isFree(id)) {
+    sound.error();
+    scene.shake(id);
+    return;
+  }
+  if (S.selected === null) {
+    sound.select();
+    select(id);
+  } else if (S.selected === id) {
+    sound.select();
+    select(null);
+  } else if (g.canMatch(S.selected, id)) {
+    doMatch(S.selected, id);
+  } else {
+    sound.error();
+    scene.shake(S.selected);
+    select(id);
+  }
+}
+
+async function doMatch(a, b) {
+  const g = S.game;
+  select(null);
+  g.match(a, b);
+  scene.clearHints();
+  S.moves++;
+  const now = performance.now();
+  S.combo = now - S.lastMatch < COMBO_WINDOW ? S.combo + 1 : 1;
+  S.lastMatch = now;
+  const mult = Math.min(S.combo, 5);
+  const pts = 20 * mult;
+  S.score += pts;
+  sound.match(S.combo);
+  const comboEl = $('#h-combo');
+  comboEl.textContent = S.combo > 1 ? `COMBO ×${mult}` : '';
+  comboEl.classList.remove('pop');
+  void comboEl.offsetWidth;
+  comboEl.classList.add('pop');
+  refreshBoard();
+  updateHUD();
+  sendProgress();
+  S.pending++;
+  const gameRef = g;
+  const mid = await scene.removePair(a, b);
+  S.pending--;
+  if (S.game !== gameRef) return;
+  floater(`+${pts}${mult > 1 ? ' ×' + mult : ''}`, mid, mult >= 3 ? 'combo-big' : '');
+  if (g.remaining === 0) return victory();
+  if (S.pending === 0 && g.availablePairs().length === 0 && !S.ended) stuck();
+}
+
+function stuck() {
+  const noShuffle = S.hc && S.shuffles >= HARDCORE_SHUFFLES;
+  $('#s-undo').disabled = S.game.history.length === 0;
+  $('#s-shuffle').disabled = noShuffle;
+  $('#m-stuck .sub').textContent = noShuffle
+    ? 'Hardcore : plus aucun mélange disponible. Annule un coup ou abandonne.'
+    : S.hc
+      ? `Les tuiles libres ne forment aucune paire. Mélanges restants : ${HARDCORE_SHUFFLES - S.shuffles}.`
+      : 'Les tuiles libres restantes ne forment aucune paire.';
+  openModal('#m-stuck');
+}
+
+// Défaite en solo (abandon quand le plateau est bloqué)
+function soloDefeat() {
+  S.running = false;
+  S.ended = true;
+  select(null);
+  sound.lose();
+  const L = LAYOUTS[S.layout];
+  $('#end-glyph').textContent = '敗';
+  $('#end-glyph').classList.add('lose');
+  $('#end-title').textContent = 'Partie perdue';
+  $('#end-sub').textContent = `${L.name}${S.hc ? ' en Hardcore' : ''} : le plateau est resté bloqué.`;
+  $('#end-stats').innerHTML =
+    statCell('Tuiles restantes', S.game.remaining, true) +
+    statCell('Temps', fmtTime(S.elapsed)) +
+    statCell('Coups', S.moves) +
+    statCell('Mélanges', S.shuffles);
+  setRank('', null);
+  setEndActions([
+    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.hc), null, 'rotate-ccw'],
+    ['Menu', 'ghost', showMenu, null, 'house'],
+  ]);
+  openModal('#m-end');
+}
+
+function doHint() {
+  if (!canPlay() || S.busy) return;
+  if (S.hc) return toast('Pas d’indice en Hardcore !', false, 'skull');
+  if (S.mode === 'duel') {
+    const wait = S.duel.hintReadyAt - performance.now();
+    if (wait > 0) return toast(`Indice disponible dans ${Math.ceil(wait / 1000)} s`, false, 'timer');
+    S.duel.hintReadyAt = performance.now() + DUEL_HINT_COOLDOWN;
+  }
+  const h = S.game.hint();
+  if (!h) return stuck();
+  S.hints++;
+  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.hint);
+  scene.hint(h);
+  sound.hint();
+  updateHUD();
+}
+
+async function doShuffle() {
+  if (!S.game || !S.running || S.paused || S.busy || S.ended || S.pending) return;
+  if (S.hc && S.shuffles >= HARDCORE_SHUFFLES) return toast('Plus aucun mélange en Hardcore !', false, 'skull');
+  closeModals();
+  S.busy = true;
+  select(null);
+  const ids = S.game.shuffle();
+  S.shuffles++;
+  S.combo = 0;
+  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.shuffle);
+  if (S.hc) toast(S.shuffles >= HARDCORE_SHUFFLES ? 'Dernier mélange utilisé !' : `Mélanges restants : ${HARDCORE_SHUFFLES - S.shuffles}`, false, 'skull');
+  sound.shuffle();
+  updateHUD();
+  await scene.shuffleAnim(S.game, ids);
+  refreshBoard();
+  sendProgress();
+  S.busy = false;
+}
+
+function doUndo() {
+  if (!S.game || !S.running || S.paused || S.busy || S.ended || S.pending) return;
+  const last = S.game.undo();
+  if (!last) return;
+  closeModals();
+  select(null);
+  scene.restorePair(last[0], last[1]);
+  S.undos++;
+  S.moves++;
+  S.combo = 0;
+  $('#h-combo').textContent = '';
+  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.undo);
+  sound.undo();
+  refreshBoard();
+  updateHUD();
+  sendProgress();
+}
+
+function togglePause(force) {
+  if (!S.game || S.ended || S.mode === 'duel') return;
+  const p = force !== undefined ? force : !S.paused;
+  if (p === S.paused) return;
+  S.paused = p;
+  if (p) {
+    scene.setBoardVisible(false);
+    openModal('#m-pause');
+  } else {
+    S.lastTick = performance.now();
+    scene.setBoardVisible(true);
+    closeModals();
+  }
+}
+
+function quitGame() {
+  if (S.mode === 'duel' && S.game && !S.ended) {
+    if (!confirm('Abandonner le duel ? Ton adversaire remportera la victoire.')) return;
+    S.duel.quitting = true;
+    duel.send({ type: 'forfeit' });
+    duel.send({ type: 'cancel' });
+  } else if (S.mode === 'duel') {
+    duel.send({ type: 'cancel' });
+  }
+  S.duel.inRoom = false;
+  showMenu();
+}
+
+// ================================================================ fin de partie
+function statCell(label, value, hl = false) {
+  return `<div class="${hl ? 'hl' : ''}"><small>${label}</small><b>${value}</b></div>`;
+}
+
+function setRank(text, ico) {
+  const el = $('#end-rank');
+  el.innerHTML = '';
+  if (ico && text) el.appendChild(icon(ico));
+  el.appendChild(document.createTextNode(text));
+  refreshIcons();
+}
+
+function setEndActions(buttons) {
+  const box = $('#end-actions');
+  box.innerHTML = '';
+  for (const [label, cls, fn, id, ico] of buttons) {
+    const b = document.createElement('button');
+    b.className = 'btn ' + cls;
+    if (ico) b.appendChild(icon(ico));
+    b.appendChild(document.createTextNode((ico ? ' ' : '') + label));
+    if (id) b.id = id;
+    b.onclick = fn;
+    box.appendChild(b);
+  }
+  refreshIcons();
+}
+
+async function victory() {
+  if (S.ended) return;
+  S.running = false;
+  if (S.mode === 'duel') {
+    // Le serveur arbitre : on annonce la fin, il renvoie le résultat.
+    duel.send({ type: 'finished', time: S.elapsed, moves: S.moves });
+    toast('Plateau vidé ! Vérification…', false, 'sparkles');
+    return;
+  }
+  S.ended = true;
+  const L = LAYOUTS[S.layout];
+  const timeBonus = Math.max(0, Math.round((L.par - S.elapsed) * 5));
+  const base = S.score;
+  S.score = Math.round((base + L.bonus + timeBonus) * (S.hc ? HARDCORE_MULT : 1));
+  updateHUD();
+  scene.celebrate();
+  sound.win();
+  $('#end-glyph').textContent = '勝';
+  $('#end-glyph').classList.remove('lose');
+  $('#end-title').textContent = S.hc ? 'Victoire Hardcore !' : 'Victoire !';
+  $('#end-sub').textContent = `${S.pseudo}, tu as vidé ${L.name} — ${L.desc}${S.hc ? ' — en Hardcore (score ×1,5)' : ''}.`;
+  $('#end-stats').innerHTML =
+    statCell('Score', S.score, true) +
+    statCell('Temps', fmtTime(S.elapsed)) +
+    statCell('Coups', S.moves) +
+    statCell('Bonus temps', '+' + timeBonus) +
+    statCell('Indices', S.hints) +
+    statCell('Mélanges', S.shuffles);
+  $('#end-rank').textContent = 'Envoi au classement…';
+  setEndActions([
+    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.hc), null, 'rotate-ccw'],
+    ['Classement', 'ghost', () => showBoard(S.layout, S.hc), null, 'trophy'],
+    ['Menu', 'ghost', showMenu, null, 'house'],
+  ]);
+  setTimeout(() => openModal('#m-end'), 1600);
+  try {
+    const res = await fetch('/api/score', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pseudo: S.pseudo, layout: S.layout, time: S.elapsed, moves: S.moves, score: S.score, hints: S.hints, shuffles: S.shuffles, hardcore: S.hc }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    setRank(data.improved ? `Classé n°${data.rank} en ${L.name}${S.hc ? ' Hardcore' : ''} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
+  } catch (e) {
+    $('#end-rank').textContent = "Impossible d'enregistrer le score (serveur injoignable).";
+  }
+}
+
+function duelResult(msg) {
+  if (S.duel.quitting) { S.duel.quitting = false; return; }
+  S.running = false;
+  S.ended = true;
+  select(null);
+  const win = msg.result === 'win';
+  if (win) { scene.celebrate(); sound.win(); } else sound.lose();
+  const reasons = {
+    finished: win ? 'Tu as vidé le plateau en premier !' : `${msg.winner} a vidé le plateau avant toi.`,
+    forfeit: win ? `${S.duel.opponent} a abandonné ou s'est déconnecté.` : 'Tu as abandonné.',
+  };
+  $('#end-glyph').textContent = win ? '勝' : '敗';
+  $('#end-glyph').classList.toggle('lose', !win);
+  $('#end-title').textContent = win ? 'Victoire en duel !' : 'Défaite…';
+  $('#end-sub').textContent = reasons[msg.reason] || '';
+  $('#end-stats').innerHTML =
+    statCell('Temps', fmtTime(win && msg.reason === 'finished' ? msg.time : S.elapsed), true) +
+    statCell('Tes coups', S.moves) +
+    statCell('Tes tuiles', S.game ? S.game.remaining : '-') +
+    statCell('Adversaire', S.duel.oppRemaining + ' tuiles');
+  setRank(win ? '+1 victoire au classement des duels' : '', win ? 'medal' : null);
+  setEndActions([
+    ['Revanche', 'primary', () => {
+      duel.send({ type: 'rematch' });
+      const b = $('#btn-rematch');
+      b.disabled = true;
+      b.textContent = 'En attente…';
+    }, 'btn-rematch', 'swords'],
+    ['Classement', 'ghost', () => showBoard('duel'), null, 'trophy'],
+    ['Menu', 'ghost', () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; showMenu(); }, null, 'house'],
+  ]);
+  if (S.duel.oppLeft) $('#btn-rematch').disabled = true;
+  setTimeout(() => openModal('#m-end'), win ? 1400 : 600);
+}
+
+// ================================================================ classement
+// Catégories : vue d'ensemble, une par forme (Normal / Hardcore), et les duels.
+let boardCache = null;
+const BOARD = { cat: 'overview', hc: false };
+
+function catKey(layout, hc) { return hc ? layout + '_hc' : layout; }
+
+async function showBoard(cat = 'overview', hc = BOARD.hc) {
+  BOARD.cat = cat;
+  BOARD.hc = hc;
+  openModal('#m-board');
+  buildBoardCats();
+  $('#board-table').innerHTML = '<tr><td class="empty">Chargement…</td></tr>';
+  try {
+    boardCache = await (await fetch('/api/leaderboard')).json();
+  } catch {
+    boardCache = null;
+  }
+  buildBoardCats();
+  renderBoard();
+}
+
+function buildBoardCats() {
+  const nav = $('#board-cats');
+  nav.innerHTML = '';
+  const add = (key, label, ico, count, group) => {
+    if (group) {
+      const g = document.createElement('div');
+      g.className = 'cat-group';
+      g.textContent = group;
+      nav.appendChild(g);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'cat' + (BOARD.cat === key ? ' active' : '');
+    btn.append(icon(ico));
+    const name = document.createElement('span');
+    name.textContent = label;
+    btn.appendChild(name);
+    if (count !== null) {
+      const c = document.createElement('em');
+      c.textContent = count;
+      btn.appendChild(c);
+    }
+    btn.onclick = () => { BOARD.cat = key; buildBoardCats(); renderBoard(); };
+    nav.appendChild(btn);
+  };
+  add('overview', 'Vue d’ensemble', 'layout-grid', null);
+  let first = true;
+  for (const [key, L] of Object.entries(LAYOUTS)) {
+    const n = boardCache ? (boardCache[catKey(key, BOARD.hc)] || []).length : null;
+    add(key, L.name, L.icon || 'grid-3x3', n, first ? 'Formes' : null);
+    first = false;
+  }
+  add('duel', 'Duels', 'swords', boardCache ? (boardCache.duel || []).length : null, 'Multijoueur');
+  $$('#board-diff button').forEach((x) => x.classList.toggle('active', (x.dataset.diff === 'hardcore') === BOARD.hc));
+  refreshIcons();
+}
+
+function renderBoard() {
+  const cat = BOARD.cat;
+  const title = $('#board-title');
+  title.innerHTML = '';
+  const L = LAYOUTS[cat];
+  const meta = cat === 'overview' ? ['Vue d’ensemble', 'layout-grid'] : cat === 'duel' ? ['Duels', 'swords'] : [L.name, L.icon];
+  title.append(icon(meta[1]), ' ' + meta[0]);
+  if (L) {
+    const sm = document.createElement('small');
+    sm.textContent = ' · ' + L.desc;
+    title.appendChild(sm);
+  }
+  $('#board-diff').classList.toggle('hidden', cat === 'duel');
+  const overview = cat === 'overview';
+  $('#board-overview').classList.toggle('hidden', !overview);
+  $('#board-wrap').classList.toggle('hidden', overview);
+  if (!boardCache) {
+    $('#board-wrap').classList.remove('hidden');
+    $('#board-table').innerHTML = '<tr><td class="empty">Serveur injoignable.</td></tr>';
+    refreshIcons();
+    return;
+  }
+  if (overview) renderOverview();
+  else renderTable(cat === 'duel' ? 'duel' : catKey(cat, BOARD.hc), cat === 'duel');
+  refreshIcons();
+}
+
+// Une carte par catégorie avec le champion et le podium
+function renderOverview() {
+  const box = $('#board-overview');
+  box.innerHTML = '';
+  const cats = [...Object.entries(LAYOUTS).map(([k, L]) => [k, L.name, L.icon]), ['duel', 'Duels', 'swords']];
+  for (const [key, name, ico] of cats) {
+    const list = key === 'duel' ? boardCache.duel || [] : boardCache[catKey(key, BOARD.hc)] || [];
+    const card = document.createElement('button');
+    card.className = 'ov-card';
+    card.onclick = () => { BOARD.cat = key; buildBoardCats(); renderBoard(); };
+    const head = document.createElement('div');
+    head.className = 'ov-head';
+    head.append(icon(ico), ' ' + name);
+    card.appendChild(head);
+    if (key !== 'duel') {
+      const cv = document.createElement('canvas');
+      cv.width = 120;
+      cv.height = 60;
+      drawLayoutPreview(cv, LAYOUTS[key].positions);
+      card.appendChild(cv);
+    }
+    const podium = document.createElement('ol');
+    if (!list.length) {
+      const li = document.createElement('li');
+      li.className = 'none';
+      li.textContent = 'Personne pour l’instant';
+      podium.appendChild(li);
+    }
+    list.slice(0, 3).forEach((e, i) => {
+      const li = document.createElement('li');
+      li.className = 'p' + (i + 1);
+      const who = document.createElement('span');
+      who.textContent = e.pseudo;
+      const val = document.createElement('b');
+      val.textContent = key === 'duel' ? `${e.wins} V` : e.score;
+      li.append(who, val);
+      podium.appendChild(li);
+    });
+    card.appendChild(podium);
+    box.appendChild(card);
+  }
+}
+
+function renderTable(key, isDuel) {
+  const table = $('#board-table');
+  const list = boardCache[key] || [];
+  table.innerHTML = '';
+  const me = (S.pseudo || '').toLowerCase();
+  const head = document.createElement('tr');
+  const cols = isDuel ? ['#', 'Pseudo', 'Victoires', 'Défaites', 'Ratio', 'Meilleur temps'] : ['#', 'Pseudo', 'Score', 'Temps', 'Coups', 'Mélanges', 'Date'];
+  for (const c of cols) { const th = document.createElement('th'); th.textContent = c; head.appendChild(th); }
+  table.appendChild(head);
+  if (!list.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = cols.length;
+    td.className = 'empty';
+    td.textContent = 'Aucun résultat pour l’instant. Sois le premier !';
+    tr.appendChild(td);
+    table.appendChild(tr);
+    return;
+  }
+  list.forEach((e, i) => {
+    const tr = document.createElement('tr');
+    if (e.pseudo.toLowerCase() === me) tr.className = 'me';
+    const cells = isDuel
+      ? [i + 1, e.pseudo, e.wins, e.losses, Math.round((e.wins / Math.max(1, e.wins + e.losses)) * 100) + ' %', e.best ? fmtTime(e.best) : '—']
+      : [i + 1, e.pseudo, e.score, fmtTime(e.time), e.moves, e.shuffles ?? 0, new Date(e.date).toLocaleDateString('fr-FR')];
+    const cls = ['rank', 'pseudo', 'score'];
+    cells.forEach((v, k) => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      if (cls[k]) td.className = cls[k];
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+}
+
+// ================================================================ duel
+const duel = new DuelClient(onDuelMessage, (st) => {
+  if (st === 'closed' && S.duel.inRoom) {
+    S.duel.inRoom = false;
+    if (S.mode === 'duel' && !S.ended) {
+      toast('Connexion au serveur perdue.', true, 'wifi-off');
+      showMenu();
+    }
+  }
+});
+
+function duelWaiting(text, code) {
+  $('#duel-options').classList.add('hidden');
+  $('#duel-wait').classList.remove('hidden');
+  $('#duel-wait-text').textContent = text;
+  $('#room-code-box').classList.toggle('hidden', !code);
+  if (code) $('#room-code').textContent = code;
+}
+
+function duelReset() {
+  $('#duel-options').classList.remove('hidden');
+  $('#duel-wait').classList.add('hidden');
+  $('#duel-error').textContent = '';
+}
+
+function openDuel(code = S.pendingCode || '') {
+  if (code) S.pendingCode = code;
+  if (!validPseudo()) return;
+  S.pendingCode = '';
+  duelReset();
+  $('#d-code').value = code;
+  $('#m-duel .sub').textContent = `Disposition : ${LAYOUTS[S.layout].name} (${LAYOUTS[S.layout].desc}) · ${S.hardcore ? 'Hardcore : aucun indice, 2 mélanges' : 'Normal'}. Même donne pour les deux joueurs — le premier qui vide le plateau gagne !`;
+  openModal('#m-duel');
+  duel.connect();
+}
+
+function onDuelMessage(msg) {
+  switch (msg.type) {
+    case 'created':
+      S.duel.inRoom = true;
+      duelWaiting('Salon créé ! Envoie ce code à ton adversaire :', msg.code);
+      break;
+    case 'queued':
+      duelWaiting(`Recherche d'un adversaire (${LAYOUTS[msg.layout].name}${msg.hardcore ? ', Hardcore' : ''})…`);
+      break;
+    case 'error':
+      duelReset();
+      $('#duel-error').textContent = msg.message;
+      break;
+    case 'start': {
+      S.duel = { ...S.duel, opponent: msg.opponent, oppRemaining: LAYOUTS[msg.layout].positions.length, hintReadyAt: 0, quitting: false, inRoom: true, oppLeft: false };
+      history.replaceState(null, '', location.pathname);
+      newGame(msg.layout, msg.seed, 'duel', !!msg.hardcore);
+      countdown(msg.countdown);
+      break;
+    }
+    case 'opp_progress':
+      S.duel.oppRemaining = msg.remaining;
+      updateHUD();
+      if (msg.combo >= 4 && msg.combo % 2 === 0) toast(`${S.duel.opponent} enchaîne un combo ×${Math.min(msg.combo, 5)} !`, false, 'flame');
+      break;
+    case 'result':
+      duelResult(msg);
+      break;
+    case 'opp_rematch':
+      toast(`${S.duel.opponent} veut une revanche !`, true, 'swords');
+      { const b = $('#btn-rematch'); if (b && !b.disabled) { b.innerHTML = ''; b.append(icon('swords'), ' Accepter la revanche'); refreshIcons(); } }
+      break;
+    case 'opp_left':
+      S.duel.oppLeft = true;
+      S.duel.inRoom = false;
+      toast(`${S.duel.opponent || "L'adversaire"} a quitté le salon.`, false, 'door-open');
+      { const b = $('#btn-rematch'); if (b) { b.disabled = true; b.textContent = 'Adversaire parti'; } }
+      break;
+    case 'opp_emote':
+      { const e = EMOTES[msg.emote]; if (e) toast(`${S.duel.opponent} : ${e[1]}`, true, e[0]); }
+      break;
+  }
+}
+
+function countdown(ms) {
+  const el = $('#countdown');
+  el.classList.remove('hidden');
+  el.innerHTML = '';
+  const start = performance.now();
+  const steps = [3, 2, 1];
+  steps.forEach((n, i) => {
+    setTimeout(() => {
+      el.innerHTML = `<span>${n}</span>`;
+      sound.tick();
+    }, ms - (3 - i) * 1000);
+  });
+  setTimeout(() => {
+    el.innerHTML = '<span>GO !</span>';
+    sound.duelGo();
+    if (S.mode === 'duel' && !S.ended) {
+      S.elapsed = 0;
+      startClock();
+    }
+    setTimeout(() => el.classList.add('hidden'), 800);
+  }, Math.max(0, ms - (performance.now() - start)));
+}
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ================================================================ crédits musique
+async function loadCredits() {
+  const ul = $('#music-credits');
+  if (ul.childElementCount) return;
+  try {
+    const pl = await (await fetch('/music/playlist.json')).json();
+    const seen = new Set();
+    for (const e of Object.values(pl).flat()) {
+      if (typeof e !== 'object' || seen.has(e.file)) continue;
+      seen.add(e.file);
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = e.source || '#';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = e.title;
+      li.append(a, ` — ${e.author} (${e.license})`);
+      ul.appendChild(li);
+    }
+  } catch { /* hors ligne */ }
+}
+
+// ================================================================ choix du plateau
+// Aperçu vu de dessus : chaque tuile est un petit rectangle, plus clair et décalé selon l'étage.
+function drawLayoutPreview(canvas, positions) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, maxZ = 0;
+  for (const p of positions) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x + 2);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y + 2);
+    maxZ = Math.max(maxZ, p.z);
+  }
+  const ratio = 1.34; // proportions d'une tuile
+  const s = Math.min((W - 8) / (maxX - minX), (H - 8) / ((maxY - minY) * ratio));
+  const ox = (W - (maxX - minX) * s) / 2, oy = (H - (maxY - minY) * s * ratio) / 2;
+  ctx.clearRect(0, 0, W, H);
+  const sorted = [...positions].sort((a, b) => a.z - b.z || a.y - b.y);
+  for (const p of sorted) {
+    const lift = p.z * 1.5;
+    const x = ox + (p.x - minX) * s - lift, y = oy + (p.y - minY) * s * ratio - lift;
+    const w = 2 * s - 1, h = 2 * s * ratio - 1;
+    ctx.fillStyle = '#17654a';
+    ctx.fillRect(x + 1, y + 1.5, w, h);
+    const l = 72 + (maxZ ? (p.z / maxZ) * 22 : 0);
+    ctx.fillStyle = `hsl(42, 45%, ${l}%)`;
+    ctx.fillRect(x, y, w, h);
+  }
+}
+
+function buildLayoutPicker() {
+  const grid = $('#layout-select');
+  grid.innerHTML = '';
+  for (const [key, L] of Object.entries(LAYOUTS)) {
+    const b = document.createElement('button');
+    b.dataset.layout = key;
+    b.title = `${L.name} — ${L.desc}`;
+    const cv = document.createElement('canvas');
+    cv.width = 120;
+    cv.height = 78;
+    drawLayoutPreview(cv, L.positions);
+    const name = document.createElement('span');
+    name.textContent = L.name.replace(/^(Le |La |L’)/, '');
+    b.append(cv, name);
+    b.onclick = () => selectLayout(key, true);
+    grid.appendChild(b);
+  }
+  selectLayout(S.layout, false);
+}
+
+function selectLayout(key, withSound) {
+  S.layout = key;
+  localStorage.setItem('mj_layout', key);
+  $$('#layout-select button').forEach((x) => x.classList.toggle('active', x.dataset.layout === key));
+  const L = LAYOUTS[key];
+  const info = $('#layout-info');
+  info.innerHTML = '';
+  info.append(icon(L.icon || 'grid-3x3'));
+  const b = document.createElement('b');
+  b.textContent = L.name;
+  info.append(b, ` — ${L.desc}`);
+  refreshIcons();
+  if (withSound) { sound.init(); sound.select(); }
+}
+
+// ================================================================ difficulté et volumes
+function selectDifficulty(hardcore, withSound) {
+  S.hardcore = hardcore;
+  localStorage.setItem('mj_hardcore', hardcore ? '1' : '0');
+  $$('#difficulty-select button').forEach((b) => b.classList.toggle('active', (b.dataset.diff === 'hardcore') === hardcore));
+  $('#menu .menu-card').classList.toggle('hc', hardcore);
+  if (withSound) { sound.init(); hardcore ? sound.error() : sound.select(); }
+}
+
+function bindVolumes() {
+  const rows = $$('.volume-row');
+  const sync = () => {
+    for (const r of rows) {
+      const v = Math.round((r.dataset.vol === 'music' ? sound.musicVol : sound.sfxVol) * 100);
+      r.querySelector('input').value = v;
+      r.querySelector('em').textContent = v + ' %';
+      r.querySelector('input').style.setProperty('--p', v + '%');
+    }
+  };
+  for (const r of rows) {
+    r.querySelector('input').addEventListener('input', (e) => {
+      sound.init();
+      const v = e.target.value / 100;
+      if (r.dataset.vol === 'music') {
+        sound.setMusicVolume(v);
+        if (v > 0 && !sound.musicOn) sound.setMusic(true);
+        if (v === 0 && sound.musicOn) sound.setMusic(false);
+      } else {
+        sound.setSfxVolume(v);
+      }
+      sync();
+    });
+    // petit son de test quand on relâche le curseur des effets
+    if (r.dataset.vol === 'sfx') r.querySelector('input').addEventListener('change', () => sound.select());
+  }
+  if (sound.musicVol === 0) sound.musicOn = false;
+  sync();
+}
+
+// ================================================================ initialisation
+function bindUI() {
+  $('#pseudo').value = S.pseudo;
+  buildLayoutPicker();
+  $$('#board-diff button').forEach((b) => (b.onclick = () => { BOARD.hc = b.dataset.diff === 'hardcore'; buildBoardCats(); renderBoard(); }));
+  $('#pseudo').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-solo').click(); });
+  $('#btn-solo').onclick = () => {
+    sound.init();
+    if (!validPseudo()) return;
+    newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo');
+  };
+  $('#btn-duel').onclick = () => { sound.init(); openDuel(); };
+  $('#btn-board').onclick = () => showBoard('overview', S.hardcore);
+  $('#btn-rules').onclick = () => { openModal('#m-rules'); loadCredits(); };
+  $$('[data-close]').forEach((b) => (b.onclick = () => {
+    const modal = b.closest('.modal');
+    if (modal.id === 'm-duel') { duel.send({ type: 'cancel' }); S.duel.inRoom = false; }
+    modal.classList.add('hidden');
+    if (S.ended && S.game) openModal('#m-end');
+  }));
+
+  // options
+  $('#opt-assist').checked = S.assist;
+  setSoundIcon();
+  bindVolumes();
+  $('#opt-assist').onchange = (e) => { S.assist = e.target.checked; localStorage.setItem('mj_assist', S.assist ? '1' : '0'); refreshBoard(); };
+  $$('#difficulty-select button').forEach((b) => (b.onclick = () => selectDifficulty(b.dataset.diff === 'hardcore', true)));
+  selectDifficulty(S.hardcore, false);
+
+  // barre d'outils
+  $('#t-hint').onclick = doHint;
+  $('#t-shuffle').onclick = doShuffle;
+  $('#t-undo').onclick = doUndo;
+  $('#t-cam').onclick = () => scene.fitCamera(true, 0.9);
+  $('#t-sound').onclick = (e) => {
+    e.stopPropagation();
+    sound.init();
+    $('#sound-pop').classList.toggle('hidden');
+  };
+  $('#sound-pop').addEventListener('click', (e) => e.stopPropagation());
+  addEventListener('click', () => $('#sound-pop').classList.add('hidden'));
+  $('#pop-mute').onclick = () => {
+    sound.init();
+    sound.setMuted(!sound.muted);
+    setSoundIcon();
+  };
+  $('#t-pause').onclick = () => togglePause();
+  $('#t-quit').onclick = () => (S.mode === 'duel' ? quitGame() : (S.ended ? showMenu() : confirm('Quitter la partie en cours ?') && showMenu()));
+
+  // modales en jeu
+  $('#s-shuffle').onclick = doShuffle;
+  $('#s-undo').onclick = doUndo;
+  $('#s-quit').onclick = () => (S.mode === 'solo' ? soloDefeat() : quitGame());
+  $('#p-resume').onclick = () => togglePause(false);
+  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.hc); };
+  $('#p-quit').onclick = () => { S.paused = false; showMenu(); };
+
+  // duel
+  $('#d-create').onclick = () => { duel.send({ type: 'create', pseudo: S.pseudo, layout: S.layout, hardcore: S.hardcore }); duelWaiting('Création du salon…'); };
+  $('#d-join').onclick = () => {
+    const code = $('#d-code').value.trim().toUpperCase();
+    if (code.length !== 4) { $('#duel-error').textContent = 'Le code fait 4 caractères.'; return; }
+    duel.send({ type: 'join', code, pseudo: S.pseudo });
+    duelWaiting('Connexion au salon…');
+  };
+  $('#d-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#d-join').click(); });
+  $('#d-quick').onclick = () => { duel.send({ type: 'quick', pseudo: S.pseudo, layout: S.layout, hardcore: S.hardcore }); duelWaiting('Recherche d\'un adversaire…'); };
+  $('#d-cancel').onclick = () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; duelReset(); };
+  $('#d-copy').onclick = async () => {
+    const link = `${location.origin}/?duel=${$('#room-code').textContent}`;
+    try { await navigator.clipboard.writeText(link); toast('Lien copié !', false, 'copy'); } catch { prompt('Copie ce lien :', link); }
+  };
+  $$('#emotes button').forEach((b) => (b.onclick = () => {
+    duel.send({ type: 'chat', emote: b.dataset.emote });
+    toast(`Toi : ${EMOTES[b.dataset.emote][1]}`, false, EMOTES[b.dataset.emote][0]);
+  }));
+
+  // clavier
+  addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === 'escape' || k === 'p') {
+      if (S.game && !S.ended && S.mode === 'solo') togglePause();
+      return;
+    }
+    if (!S.game || S.ended) return;
+    if (k === 'h') doHint();
+    else if (k === 'm') doShuffle();
+    else if (k === 'z' || (e.ctrlKey && k === 'z')) doUndo();
+    else if (k === 'c') scene.fitCamera(true, 0.9);
+    else if (k === 's') $('#t-sound').click();
+  });
+  addEventListener('pointerdown', () => sound.init());
+  addEventListener('blur', () => { if (S.mode === 'solo' && S.running && !S.ended) togglePause(true); });
+
+  // horloge
+  setInterval(() => {
+    if (S.running && !S.paused && !S.ended) {
+      const now = performance.now();
+      S.elapsed += (now - S.lastTick) / 1000;
+      S.lastTick = now;
+      $('#h-time').textContent = fmtTime(S.elapsed);
+      if (S.combo > 1 && now - S.lastMatch > COMBO_WINDOW) {
+        S.combo = 0;
+        $('#h-combo').textContent = '';
+      }
+    }
+  }, 200);
+}
+
+async function init() {
+  refreshIcons();
+  sound.onTrack = (title) => { if (sound.musicOn && !sound.muted) toast(title, false, 'music', 'music'); };
+  await loadFaceFonts();
+  scene = new Scene3D($('#stage'), {
+    onTileClick,
+    onTileHover: (id) => {
+      const ok = id !== null && S.game && canPlay() && S.game.isFree(id);
+      scene.setHovered(ok ? id : null);
+      document.body.style.cursor = ok ? 'pointer' : 'default';
+    },
+    onLand: (kind) => (kind === 'firework' ? sound.firework() : sound.land()),
+  });
+  bindUI();
+  showMenu();
+  $('#loader').classList.add('fade');
+  setTimeout(() => $('#loader').remove(), 900);
+  const code = new URLSearchParams(location.search).get('duel');
+  if (code) openDuel(code.toUpperCase().slice(0, 4));
+}
+
+init();

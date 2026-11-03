@@ -1,0 +1,11 @@
+Musique du jeu
+==============
+
+Les musiques sont des morceaux libres de droits d'OpenGameArt.org (voir CREDITS.md pour les auteurs et les licences).
+Le fichier playlist.json indique quels morceaux jouer pour chaque ambiance (menu, solo, duel). Les morceaux d'une même ambiance sont joués à la suite, dans un ordre aléatoire.
+
+Pour ajouter un morceau :
+1. Dépose le fichier ici (.mp3, .ogg, .wav, .m4a).
+2. Ajoute une entrée dans playlist.json, par exemple :
+   { "file": "mon-morceau.ogg", "title": "Titre", "author": "Auteur", "license": "CC0", "source": "https://..." }
+3. Si la licence demande de citer l'auteur (CC-BY, OGA-BY), ajoute-le aussi dans CREDITS.md.

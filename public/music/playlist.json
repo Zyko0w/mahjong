@@ -1,0 +1,16 @@
+{
+  "menu": [
+    { "file": "hitctrl-jade-kings-throne.ogg", "title": "Views From Atop the Jade Kings Throne", "author": "Hitctrl", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/views-from-atop-the-jade-kings-throne" },
+    { "file": "tozan-asianoriental2.ogg", "title": "Asianoriental2", "author": "Tozan", "license": "CC0", "source": "https://opengameart.org/content/asianoriental2" }
+  ],
+  "solo": [
+    { "file": "elerya-liyan.mp3", "title": "Liyan", "author": "elerya", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/liyan" },
+    { "file": "bosslevelvgm-asian-string-suite.mp3", "title": "Asian String Suite", "author": "BossLevelVGM", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/asian-string-suite" },
+    { "file": "springspring-cold-to-lukewarm-mixia.ogg", "title": "Cold to Lukewarm Mixia", "author": "Spring Spring", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/cold-to-lukewarm-mixia" },
+    { "file": "yottabyte-sunrise-in-the-dynasty.mp3", "title": "Sunrise in the Dynasty", "author": "Yottabyte1024", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/sunrise-in-the-dynasty" }
+  ],
+  "duel": [
+    { "file": "springspring-kung-fu-hero.ogg", "title": "Kung-Fu Hero", "author": "Julie Damsgaard / Spring Spring", "license": "OGA-BY 3.0", "source": "https://opengameart.org/content/kung-fu-hero" },
+    { "file": "springspring-cold-to-lukewarm-mixia.ogg", "title": "Cold to Lukewarm Mixia", "author": "Spring Spring", "license": "CC-BY 3.0", "source": "https://opengameart.org/content/cold-to-lukewarm-mixia" }
+  ]
+}
