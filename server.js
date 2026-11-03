@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { LAYOUTS, emptyBoard, normalizeBoard, cleanPseudo, parseScore, submitSolo, recordDuel, publicBoard } from './lib/leaderboard.js';
+import { LAYOUTS, cleanDifficulty, emptyBoard, normalizeBoard, cleanPseudo, parseScore, submitSolo, recordDuel, publicBoard } from './lib/leaderboard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -190,6 +190,13 @@ function newCode() {
   return code;
 }
 
+function samePlayer(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.cid && b.cid && a.cid === b.cid) return true;
+  return String(a.pseudo).toLowerCase() === String(b.pseudo).toLowerCase();
+}
+
 function other(room, ws) {
   return room.players.find((p) => p !== ws);
 }
@@ -220,7 +227,8 @@ function startMatch(room) {
       type: 'start',
       seed: room.seed,
       layout: room.layout,
-      hardcore: room.hardcore,
+      difficulty: room.difficulty,
+      hardcore: room.difficulty === 'hardcore', // compatibilité
       countdown,
       opponent: other(room, ws).pseudo,
     });
@@ -253,24 +261,35 @@ wss.on('connection', (ws) => {
     }
     if (!msg || typeof msg.type !== 'string') return;
     if (msg.pseudo) ws.pseudo = cleanPseudo(msg.pseudo) || ws.pseudo;
+    // identifiant de navigateur (stocké en local) : sert à empêcher de s'affronter soi-même
+    if (typeof msg.cid === 'string' && /^[a-z0-9-]{8,40}$/i.test(msg.cid)) ws.cid = msg.cid;
     const layout = LAYOUTS.includes(msg.layout) ? msg.layout : 'express';
-    const hardcore = msg.hardcore === true;
-    const qKey = layout + (hardcore ? '_hc' : '');
+    const difficulty = cleanDifficulty(msg.difficulty, msg.hardcore);
+    const hardcore = difficulty !== 'normal';
+    const qKey = layout + ':' + difficulty;
 
     switch (msg.type) {
       case 'create': {
         leaveAll(ws);
-        const room = { code: newCode(), layout, hardcore, players: [ws], state: 'waiting', rematch: new Set() };
+        const room = { code: newCode(), layout, difficulty, hardcore, players: [ws], state: 'waiting', rematch: new Set() };
         rooms.set(room.code, room);
         ws.room = room;
-        send(ws, { type: 'created', code: room.code, layout, hardcore });
+        send(ws, { type: 'created', code: room.code, layout, difficulty });
         break;
       }
       case 'join': {
         const code = String(msg.code || '').toUpperCase().trim();
         const room = rooms.get(code);
         if (!room) return send(ws, { type: 'error', message: 'Salon introuvable.' });
-        if (room.players.includes(ws)) return;
+        if (room.players.some((p) => samePlayer(p, ws))) {
+          const sameName = room.players.some((p) => p !== ws && p.cid !== ws.cid);
+          return send(ws, {
+            type: 'error',
+            message: sameName
+              ? 'Ce pseudo est déjà celui du créateur du salon : choisis-en un autre.'
+              : 'Tu ne peux pas rejoindre ton propre salon : envoie le code à ton adversaire.',
+          });
+        }
         if (room.players.length >= 2 || room.state !== 'waiting')
           return send(ws, { type: 'error', message: 'Ce salon est déjà complet.' });
         leaveAll(ws);
@@ -282,16 +301,20 @@ wss.on('connection', (ws) => {
       case 'quick': {
         leaveAll(ws);
         const waiting = quickQueue[qKey];
+        if (waiting && waiting.readyState === 1 && samePlayer(waiting, ws) && waiting !== ws) {
+          // le même joueur cherche déjà (autre onglet) : on ne l'appaire pas avec lui-même
+          return send(ws, { type: 'error', message: 'Tu cherches déjà un adversaire dans un autre onglet.' });
+        }
         if (waiting && waiting !== ws && waiting.readyState === 1) {
           delete quickQueue[qKey];
-          const room = { code: newCode(), layout, hardcore, players: [waiting, ws], state: 'waiting', rematch: new Set() };
+          const room = { code: newCode(), layout, difficulty, hardcore, players: [waiting, ws], state: 'waiting', rematch: new Set() };
           rooms.set(room.code, room);
           waiting.room = room;
           ws.room = room;
           startMatch(room);
         } else {
           quickQueue[qKey] = ws;
-          send(ws, { type: 'queued', layout, hardcore });
+          send(ws, { type: 'queued', layout, difficulty });
         }
         break;
       }

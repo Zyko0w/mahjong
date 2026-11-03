@@ -51,10 +51,13 @@ Les offres gratuites de Render mettent le serveur en veille après 15 minutes d'
 - **Créer un plateau** : dans `public/js/layouts.js`, chaque forme est dessinée en ASCII, couche par couche (`#` = une tuile). Il faut un nombre pair de tuiles, 144 au maximum. Le plateau apparaît ensuite tout seul dans le menu, le classement et le duel.
 - **HUD** : timer, coups, tuiles restantes, paires jouables, score et combo.
 - **Outils** : indice (H), mélange garanti soluble (M), annulation (Z), caméra (C), pause (Échap).
+- **Mode Samouraï** : ni indice ni mélange, score ×2 et classement à part (vérifié par le serveur). Il marche aussi en duel.
 - **Mode Hardcore** : aucun indice et 2 mélanges maximum. Si le plateau reste bloqué, la partie est perdue. Le score final est multiplié par 1,5, et le mode a son propre classement (le serveur vérifie qu'aucun indice n'a été utilisé et qu'il n'y a pas eu plus de 2 mélanges). Il marche aussi en duel.
 - **Transitions** : au lancement d'une partie, des panneaux de laque se ferment, avec un coup de katana, un cri de samouraï, un sceau et un gong. En duel, un écran « VS » rouge contre jade, avec un sabre dégainé et un grand gong au GO.
 - **Classement sans base de données** (`data/leaderboard.json`) : il est organisé par catégorie, avec une vue d'ensemble (podium de chaque forme), un classement par forme en Normal et en Hardcore, et un classement des duels.
 - **Duel en direct** (WebSocket) : on crée un salon et on partage son code ou son lien d'invitation, ou on lance une partie rapide. Les deux joueurs ont la même donne, voient la progression de l'adversaire en direct et peuvent s'envoyer des émotes. Le premier qui vide le plateau gagne, puis une revanche est possible.
+- **Caméras du duel** (bouton Vue ou touche V) : « Mon jeu » centre ton plateau comme en solo, avec l'adversaire en incrustation ; « Adversaire » fait un gros plan sur lui ; « Ensemble » montre toute la table (vue du compte à rebours).
+- **Sécurité du duel** : impossible de rejoindre son propre salon ou de s'affronter soi-même (même navigateur ou même pseudo).
 - **Duel immersif** : l'adversaire est assis en face, de l'autre côté de la table (`public/js/opponent.js`). Son plateau est rejoué en direct : sélections, paires, annulations, mélanges. Ses bras vont chercher les tuiles, ses émotes s'affichent dans une bulle au-dessus de lui, et il réagit à la victoire ou à la défaite. À la fin, un écran montre les deux joueurs côte à côte avec les scores et le vainqueur couronné.
 - **Entrée dans le temple** : la page attend que le décor 3D soit entièrement dessiné. Le bouton « Entrer » lance aussitôt la musique, déjà téléchargée en arrière-plan (les navigateurs interdisent le son avant un premier clic).
 

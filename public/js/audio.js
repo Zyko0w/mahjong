@@ -4,6 +4,16 @@
 import { Instruments, freqOf } from './music.js';
 
 const MODES = ['menu', 'solo', 'duel'];
+// Fige un paramètre audio à sa valeur actuelle (annule fondus et courbes en cours sans à-coup)
+function hold(param, t) {
+  if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t);
+  else {
+    const v = param.value;
+    param.cancelScheduledValues(0);
+    param.setValueAtTime(v, t);
+  }
+}
+
 const readVol = (key, def) => { const v = parseFloat(localStorage.getItem(key)); return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : def; };
 
 export class Sound {
@@ -117,7 +127,7 @@ export class Sound {
     this.musicVol = Math.min(1, Math.max(0, v));
     localStorage.setItem('mj_music_vol', String(this.musicVol));
     if (this.ctx && this.musicOn) {
-      this.musicBus.gain.cancelScheduledValues(this.ctx.currentTime);
+      hold(this.musicBus.gain, this.ctx.currentTime);
       this.musicBus.gain.setTargetAtTime(this.musicVol, this.ctx.currentTime, 0.05);
     }
   }
@@ -138,12 +148,23 @@ export class Sound {
     this.switchTimer = setTimeout(() => this.startMusic(), 700);
   }
 
+  // Fondu avec une courbe adaptée à l'oreille : la montée démarre tout doucement
+  // (un fondu linéaire du gain paraît brutal au début), la descente reste rapide.
   fadeMusic(target, time = 1.5) {
     const t = this.ctx.currentTime;
     const g = this.musicBus.gain;
-    g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(target * this.musicVol, t + time);
+    const from = g.value, to = target * this.musicVol;
+    hold(g, t);
+    if (to > from && time > 0.2) {
+      const n = 64, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const k = i / (n - 1);
+        curve[i] = from + (to - from) * k * k * k; // montée cubique : très douce au départ
+      }
+      g.setValueCurveAtTime(curve, t, time);
+    } else {
+      g.linearRampToValueAtTime(to, t + time);
+    }
   }
 
   // Lit les morceaux de l'ambiance courante à la suite, dans un ordre aléatoire
@@ -153,7 +174,10 @@ export class Sound {
     if (!this.songs(this.trackName).length) return;
     this.ensureAudioEl();
     if (!this.audioConnected) {
-      this.ctx.createMediaElementSource(this.audioEl).connect(this.musicBus);
+      // gain propre à chaque morceau : harmonise les volumes (gainDb dans playlist.json)
+      this.trackGain = this.ctx.createGain();
+      this.trackGain.connect(this.musicBus);
+      this.ctx.createMediaElementSource(this.audioEl).connect(this.trackGain);
       this.audioConnected = true;
     }
     if (this.preloaded === this.trackName) {
@@ -166,13 +190,20 @@ export class Sound {
       }
       this.nextSong();
     }
-    this.fadeMusic(1, 0.8);
+    // premier lancement : long fondu pour une entrée en douceur ; changement d'ambiance : plus court
+    this.fadeMusic(1, this.hasStarted ? 1.2 : 2.5);
+    this.hasStarted = true;
   }
 
   playCurrent() {
     const song = this.queue[this.queueIdx];
     if (!song) return;
     this.audioEl.loop = this.queue.length === 1;
+    if (this.trackGain) {
+      const t = this.ctx.currentTime;
+      this.trackGain.gain.cancelScheduledValues(t);
+      this.trackGain.gain.setValueAtTime(10 ** ((Number(song.gainDb) || 0) / 20), t);
+    }
     this.audioEl.play().catch(() => {});
     const label = song.title ? song.title + (song.author ? ' — ' + song.author : '') : song.file.replace(/\.[^.]+$/, '');
     this.onTrack && this.onTrack(label);
@@ -196,9 +227,8 @@ export class Sound {
     if (!this.ctx || !this.musicOn) return;
     const t = this.ctx.currentTime;
     const g = this.musicBus.gain;
-    g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(0.15, t + 0.2);
+    hold(g, t);
+    g.linearRampToValueAtTime(this.musicVol * 0.3, t + 0.2); // baisse relative au réglage du joueur
     g.linearRampToValueAtTime(this.musicVol, t + time);
   }
 

@@ -429,3 +429,17 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
 #loader.ready .loader-bar, #loader.ready #loader-text { display: none; }
 /* le temple se devine déjà derrière l'écran d'entrée */
 #loader.ready { background: radial-gradient(circle at 50% 40%, rgba(42, 10, 12, 0.55), rgba(5, 2, 3, 0.88) 70%); backdrop-filter: blur(3px); }
+
+/* --------------------------------------------------------- mode samouraï */
+#difficulty-select { grid-template-columns: repeat(3, 1fr); }
+#difficulty-select button small { font-size: 10px; }
+#difficulty-select button[data-diff='samurai'].active { border-color: #f2f2f2; background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.35)); box-shadow: 0 0 22px rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(224, 74, 58, 0.5); }
+#difficulty-select button[data-diff='samurai'] svg.lucide { color: #ffffff; }
+.menu-card.sm { border-color: rgba(255, 255, 255, 0.5); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), 0 0 40px rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(224, 74, 58, 0.35); }
+.hardcore-tag.samurai { color: #ffffff; background: linear-gradient(90deg, rgba(10, 10, 10, 0.85), rgba(110, 10, 14, 0.85)); border-color: rgba(255, 255, 255, 0.55); }
+
+/* --------------------------------------------------------- incrustation de l'adversaire (duel) */
+.pip { position: absolute; right: 16px; bottom: 96px; width: min(300px, 30vw); aspect-ratio: 16 / 10; border-radius: 14px; border: 2px solid rgba(214, 165, 74, 0.7); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), inset 0 0 30px rgba(0, 0, 0, 0.35); pointer-events: none; overflow: hidden; }
+.pip-label { position: absolute; left: 8px; top: 7px; font-family: var(--title); font-size: 12px; color: var(--gold-2); background: rgba(10, 20, 16, 0.75); padding: 3px 9px; border-radius: 8px; letter-spacing: 0.06em; }
+.pip-hint { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: rgba(255, 255, 255, 0.6); background: rgba(0, 0, 0, 0.4); padding: 2px 7px; border-radius: 6px; }
+@media (max-width: 760px) { .pip { bottom: 64px; width: 42vw; } }

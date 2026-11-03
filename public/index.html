@@ -50,7 +50,8 @@
         <span>Difficulté</span>
         <div class="segmented" id="difficulty-select">
           <button data-diff="normal"><b><i data-lucide="leaf"></i> Normal</b><small>Indices et mélanges libres</small></button>
-          <button data-diff="hardcore"><b><i data-lucide="skull"></i> Hardcore</b><small>Aucun indice · 2 mélanges · score ×1,5</small></button>
+          <button data-diff="hardcore"><b><i data-lucide="skull"></i> Hardcore</b><small>0 indice · 2 mélanges · ×1,5</small></button>
+          <button data-diff="samurai"><b><i data-lucide="swords"></i> Samouraï</b><small>0 indice · 0 mélange · ×2</small></button>
         </div>
       </div>
 
@@ -111,6 +112,7 @@
       <button class="tool" id="t-shuffle" title="Mélanger (M)"><span><i data-lucide="shuffle"></i><b class="badge hidden" id="shuffle-left">2</b></span><small>Mélanger</small></button>
       <button class="tool" id="t-undo" title="Annuler (Z)"><span><i data-lucide="undo-2"></i></span><small>Annuler</small></button>
       <button class="tool" id="t-cam" title="Recentrer la caméra (C)"><span><i data-lucide="video"></i></span><small>Caméra</small></button>
+      <button class="tool hidden" id="t-view" title="Changer de vue (V)"><span><i data-lucide="eye"></i></span><small id="t-view-label">Mon jeu</small></button>
       <button class="tool" id="t-sound" title="Son (S)"><span id="t-sound-ico"><i data-lucide="volume-2"></i></span><small>Son</small></button>
       <button class="tool" id="t-pause" title="Pause (Échap)"><span><i data-lucide="pause"></i></span><small>Pause</small></button>
       <button class="tool danger" id="t-quit" title="Quitter"><span><i data-lucide="x"></i></span><small>Quitter</small></button>
@@ -120,6 +122,7 @@
         <button class="btn ghost small" id="pop-mute"><i data-lucide="volume-x"></i> Couper tout le son</button>
       </div>
     </div>
+    <div class="pip hidden" id="pip"><span class="pip-label" id="pip-label">Adversaire</span><span class="pip-hint">V : changer de vue</span></div>
     <div class="hardcore-tag hidden" id="hardcore-tag"><i data-lucide="skull"></i> Hardcore</div>
     <p class="controls-help">Clic gauche : choisir · Glisser : tourner · Molette : zoom · Clic droit : déplacer</p>
   </section>
@@ -195,6 +198,7 @@
             <div class="tabs small" id="board-diff">
               <button data-diff="normal" class="active"><i data-lucide="leaf"></i> Normal</button>
               <button data-diff="hardcore"><i data-lucide="skull"></i> Hardcore</button>
+              <button data-diff="samurai"><i data-lucide="swords"></i> Samouraï</button>
             </div>
           </div>
           <div id="board-overview" class="board-overview hidden"></div>
@@ -217,6 +221,7 @@
         <li><b>Score :</b> points des paires + bonus de fin + bonus de temps. Indice −30, mélange −80, annulation −20.</li>
         <li><b>Bloqué ?</b> Le mélange redistribue les tuiles restantes en garantissant une solution.</li>
         <li><b>Duel :</b> même donne pour les deux, le premier à vider le plateau l'emporte.</li>
+        <li><b>Samouraï :</b> ni indice ni mélange, seulement ton sabre (et l'annulation de coups). Score ×2, classement à part.</li>
         <li><b>Hardcore :</b> aucun indice et seulement 2 mélanges. Si tu restes bloqué, c'est perdu ! En échange, le score final est multiplié par 1,5 et compte dans un classement à part.</li>
       </ul>
       <div class="keys">

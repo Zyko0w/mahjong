@@ -1,6 +1,16 @@
 // Client WebSocket pour le mode duel.
 // Par défaut, le serveur de duel est le site lui-même (/ws). En production sur Vercel, il est
 // hébergé ailleurs (Railway, Render…) et son adresse vient de window.MJ_CONFIG.duelServer (config.js).
+// Identifiant propre à ce navigateur : le serveur refuse qu'un joueur s'affronte lui-même
+export const CLIENT_ID = (() => {
+  let id = localStorage.getItem('mj_client_id');
+  if (!id || !/^[a-z0-9-]{8,40}$/i.test(id)) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
+    localStorage.setItem('mj_client_id', id);
+  }
+  return id;
+})();
+
 export function duelUrl() {
   let url = ((window.MJ_CONFIG && window.MJ_CONFIG.duelServer) || '').trim();
   if (!url) {
@@ -43,7 +53,7 @@ export class DuelClient {
   }
 
   send(msg) {
-    const data = JSON.stringify(msg);
+    const data = JSON.stringify({ ...msg, cid: CLIENT_ID });
     if (this.ws && this.ws.readyState === 1) this.ws.send(data);
     else {
       this.queue.push(data);

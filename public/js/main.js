@@ -13,24 +13,47 @@ let scene;
 let opp = null; // adversaire assis en face (duel)
 let duelLayout = null;
 
+// Vues du duel : ton plateau (avec l'adversaire en incrustation), l'adversaire en grand, ou l'ensemble
+const DUEL_VIEWS = { me: 'Mon jeu', opp: 'Adversaire', all: 'Ensemble' };
+function setDuelView(mode, duration = 1.1) {
+  if (!duelLayout) return;
+  S.duelView = DUEL_VIEWS[mode] ? mode : 'me';
+  scene.duelView(S.duelView, duelLayout, duration);
+  $('#t-view-label').textContent = DUEL_VIEWS[S.duelView];
+  $('#pip').classList.toggle('hidden', S.duelView !== 'me');
+}
+function cycleDuelView() {
+  const order = ['me', 'opp', 'all'];
+  setDuelView(order[(order.indexOf(S.duelView) + 1) % order.length]);
+}
+
 function disposeOpponent() {
   if (opp) { opp.dispose(); opp = null; }
   duelLayout = null;
+  $('#pip').classList.add('hidden');
+  $('#t-view').classList.add('hidden');
   if (scene) scene.resetDuel();
 }
 
 const PENALTY = { hint: 30, shuffle: 80, undo: 20 };
 const COMBO_WINDOW = 5000;
 const DUEL_HINT_COOLDOWN = 10000;
-const HARDCORE_SHUFFLES = 2;
-const HARDCORE_MULT = 1.5;
+// Difficultés : indices autorisés, nombre de mélanges, multiplicateur de score, suffixe de classement
+const DIFFS = {
+  normal: { name: 'Normal', hints: true, shuffles: Infinity, mult: 1, suffix: '', glyph: '始', icon: 'leaf', rules: 'Indices et mélanges libres' },
+  hardcore: { name: 'Hardcore', hints: false, shuffles: 2, mult: 1.5, suffix: '_hc', glyph: '死', icon: 'skull', rules: 'Aucun indice · 2 mélanges' },
+  samurai: { name: 'Samouraï', hints: false, shuffles: 0, mult: 2, suffix: '_sm', glyph: '侍', icon: 'swords', rules: 'Aucun indice · aucun mélange' },
+};
+const diffOf = (d) => DIFFS[d] || DIFFS.normal;
+const curDiff = () => diffOf(S.diff);
 
 const S = {
   mode: 'solo',
   layout: LAYOUTS[localStorage.getItem('mj_layout')] ? localStorage.getItem('mj_layout') : 'classic',
   pseudo: localStorage.getItem('mj_pseudo') || '',
   assist: localStorage.getItem('mj_assist') !== '0',
-  hardcore: localStorage.getItem('mj_hardcore') === '1', // difficulté choisie dans le menu
+  difficulty: DIFFS[localStorage.getItem('mj_difficulty')] ? localStorage.getItem('mj_difficulty') : localStorage.getItem('mj_hardcore') === '1' ? 'hardcore' : 'normal', // choisie dans le menu
+  diff: 'normal', // difficulté de la partie en cours
   hc: false, // difficulté de la partie en cours
   game: null,
   seed: 0,
@@ -209,9 +232,12 @@ function playTransition({ glyph, title, sub, hc = false, duel = false, left = ''
 }
 
 // ================================================================ partie
-async function newGame(layout, seed, mode, hardcore = S.hardcore) {
+async function newGame(layout, seed, mode, difficulty = S.difficulty) {
+  const D = diffOf(difficulty);
+  const hardcore = difficulty !== 'normal';
+  S.diff = DIFFS[difficulty] ? difficulty : 'normal';
   S.mode = mode;
-  S.hc = hardcore;
+  S.hc = hardcore; // mode à contraintes (hardcore ou samouraï)
   S.layout = layout;
   S.seed = seed;
   S.game = new MahjongGame(layout, seed);
@@ -221,8 +247,8 @@ async function newGame(layout, seed, mode, hardcore = S.hardcore) {
   const L = LAYOUTS[layout];
   const tr = playTransition(
     mode === 'duel'
-      ? { duel: true, glyph: '戰', title: 'Duel !', sub: `${L.name}${hardcore ? ' · Hardcore' : ''}`, left: S.pseudo, right: S.duel.opponent, hc: hardcore }
-      : { glyph: hardcore ? '死' : '始', title: L.name, sub: hardcore ? 'Hardcore · aucun indice · 2 mélanges' : L.desc, hc: hardcore }
+      ? { duel: true, glyph: '戰', title: 'Duel !', sub: `${L.name}${hardcore ? ' · ' + D.name : ''}`, left: S.pseudo, right: S.duel.opponent, hc: hardcore }
+      : { glyph: D.glyph, title: L.name, sub: hardcore ? `${D.name} · ${D.rules.toLowerCase()}` : L.desc, hc: hardcore }
   );
   const gameRef = S.game;
   await tr.covered; // l'écran est couvert : on prépare le plateau sans saccade visible
@@ -232,6 +258,10 @@ async function newGame(layout, seed, mode, hardcore = S.hardcore) {
   $('#duel-panel').classList.toggle('hidden', mode !== 'duel');
   $('#t-pause').disabled = mode === 'duel';
   $('#hardcore-tag').classList.toggle('hidden', !hardcore);
+  $('#hardcore-tag').classList.toggle('samurai', difficulty === 'samurai');
+  $('#hardcore-tag').innerHTML = '';
+  $('#hardcore-tag').append(icon(D.icon), ' ' + D.name);
+  refreshIcons();
   $('#selected-info').textContent = '';
   scene.controls.autoRotate = false;
   disposeOpponent();
@@ -243,6 +273,10 @@ async function newGame(layout, seed, mode, hardcore = S.hardcore) {
     scene.setBoardOffset(duelLayout.ourZ);
     scene.setTableScale(duelLayout.tableScale);
     opp = new OpponentView(scene, new MahjongGame(layout, seed), duelLayout, S.duel.opponent || 'Adversaire');
+    scene.setPip($('#pip'), duelLayout);
+    $('#pip-label').textContent = S.duel.opponent || 'Adversaire';
+    $('#t-view').classList.remove('hidden');
+    S.duelView = 'all';
   }
   refreshBoard();
   updateHUD();
@@ -279,12 +313,13 @@ function updateHUD() {
   $('#h-tiles').textContent = g.remaining;
   $('#h-score').textContent = S.score;
   $('#t-undo').disabled = g.history.length === 0;
-  $('#t-hint').disabled = S.hc;
-  $('#t-hint').title = S.hc ? 'Pas d’indice en Hardcore' : 'Indice (H)';
-  const left = HARDCORE_SHUFFLES - S.shuffles;
-  $('#shuffle-left').classList.toggle('hidden', !S.hc);
+  const D = curDiff();
+  $('#t-hint').disabled = !D.hints;
+  $('#t-hint').title = D.hints ? 'Indice (H)' : `Pas d’indice en ${D.name}`;
+  const left = D.shuffles - S.shuffles;
+  $('#shuffle-left').classList.toggle('hidden', !Number.isFinite(D.shuffles));
   $('#shuffle-left').textContent = Math.max(0, left);
-  $('#t-shuffle').disabled = S.hc && left <= 0;
+  $('#t-shuffle').disabled = left <= 0;
   if (S.mode === 'duel') {
     $('#d-me-name').textContent = S.pseudo;
     $('#d-me-left').textContent = g.remaining;
@@ -377,13 +412,14 @@ async function doMatch(a, b) {
 }
 
 function stuck() {
-  const noShuffle = S.hc && S.shuffles >= HARDCORE_SHUFFLES;
+  const D = curDiff();
+  const noShuffle = S.shuffles >= D.shuffles;
   $('#s-undo').disabled = S.game.history.length === 0;
   $('#s-shuffle').disabled = noShuffle;
   $('#m-stuck .sub').textContent = noShuffle
-    ? 'Hardcore : plus aucun mélange disponible. Annule un coup ou abandonne.'
-    : S.hc
-      ? `Les tuiles libres ne forment aucune paire. Mélanges restants : ${HARDCORE_SHUFFLES - S.shuffles}.`
+    ? `${D.name} : ${D.shuffles ? 'plus aucun mélange disponible' : 'aucun mélange autorisé'}. Annule un coup ou abandonne.`
+    : Number.isFinite(D.shuffles)
+      ? `Les tuiles libres ne forment aucune paire. Mélanges restants : ${D.shuffles - S.shuffles}.`
       : 'Les tuiles libres restantes ne forment aucune paire.';
   openModal('#m-stuck');
 }
@@ -398,7 +434,7 @@ function soloDefeat() {
   $('#end-glyph').textContent = '敗';
   $('#end-glyph').classList.add('lose');
   $('#end-title').textContent = 'Partie perdue';
-  $('#end-sub').textContent = `${L.name}${S.hc ? ' en Hardcore' : ''} : le plateau est resté bloqué.`;
+  $('#end-sub').textContent = `${L.name}${S.hc ? ' en ' + curDiff().name : ''} : le plateau est resté bloqué.`;
   $('#end-stats').innerHTML =
     statCell('Tuiles restantes', S.game.remaining, true) +
     statCell('Temps', fmtTime(S.elapsed)) +
@@ -406,7 +442,7 @@ function soloDefeat() {
     statCell('Mélanges', S.shuffles);
   setRank('', null);
   setEndActions([
-    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.hc), null, 'rotate-ccw'],
+    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff), null, 'rotate-ccw'],
     ['Menu', 'ghost', showMenu, null, 'house'],
   ]);
   openModal('#m-end');
@@ -414,7 +450,7 @@ function soloDefeat() {
 
 function doHint() {
   if (!canPlay() || S.busy) return;
-  if (S.hc) return toast('Pas d’indice en Hardcore !', false, 'skull');
+  if (!curDiff().hints) return toast(`Pas d’indice en ${curDiff().name} !`, false, curDiff().icon);
   if (S.mode === 'duel') {
     const wait = S.duel.hintReadyAt - performance.now();
     if (wait > 0) return toast(`Indice disponible dans ${Math.ceil(wait / 1000)} s`, false, 'timer');
@@ -431,7 +467,7 @@ function doHint() {
 
 async function doShuffle() {
   if (!S.game || !S.running || S.paused || S.busy || S.ended || S.pending) return;
-  if (S.hc && S.shuffles >= HARDCORE_SHUFFLES) return toast('Plus aucun mélange en Hardcore !', false, 'skull');
+  if (S.shuffles >= curDiff().shuffles) return toast(curDiff().shuffles ? `Plus aucun mélange en ${curDiff().name} !` : `Aucun mélange en ${curDiff().name} : fie-toi à ton sabre !`, false, curDiff().icon);
   closeModals();
   S.busy = true;
   select(null);
@@ -440,7 +476,7 @@ async function doShuffle() {
   S.shuffles++;
   S.combo = 0;
   if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.shuffle);
-  if (S.hc) toast(S.shuffles >= HARDCORE_SHUFFLES ? 'Dernier mélange utilisé !' : `Mélanges restants : ${HARDCORE_SHUFFLES - S.shuffles}`, false, 'skull');
+  if (Number.isFinite(curDiff().shuffles)) toast(S.shuffles >= curDiff().shuffles ? 'Dernier mélange utilisé !' : `Mélanges restants : ${curDiff().shuffles - S.shuffles}`, false, curDiff().icon);
   sound.shuffle();
   updateHUD();
   await scene.shuffleAnim(S.game, ids);
@@ -537,14 +573,14 @@ async function victory() {
   const L = LAYOUTS[S.layout];
   const timeBonus = Math.max(0, Math.round((L.par - S.elapsed) * 5));
   const base = S.score;
-  S.score = Math.round((base + L.bonus + timeBonus) * (S.hc ? HARDCORE_MULT : 1));
+  S.score = Math.round((base + L.bonus + timeBonus) * curDiff().mult);
   updateHUD();
   scene.celebrate();
   sound.win();
   $('#end-glyph').textContent = '勝';
   $('#end-glyph').classList.remove('lose');
-  $('#end-title').textContent = S.hc ? 'Victoire Hardcore !' : 'Victoire !';
-  $('#end-sub').textContent = `${S.pseudo}, tu as vidé ${L.name} — ${L.desc}${S.hc ? ' — en Hardcore (score ×1,5)' : ''}.`;
+  $('#end-title').textContent = S.hc ? `Victoire ${curDiff().name} !` : 'Victoire !';
+  $('#end-sub').textContent = `${S.pseudo}, tu as vidé ${L.name} — ${L.desc}${S.hc ? ` — en ${curDiff().name} (score ×${String(curDiff().mult).replace('.', ',')})` : ''}.`;
   $('#end-stats').innerHTML =
     statCell('Score', S.score, true) +
     statCell('Temps', fmtTime(S.elapsed)) +
@@ -554,8 +590,8 @@ async function victory() {
     statCell('Mélanges', S.shuffles);
   $('#end-rank').textContent = 'Envoi au classement…';
   setEndActions([
-    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.hc), null, 'rotate-ccw'],
-    ['Classement', 'ghost', () => showBoard(S.layout, S.hc), null, 'trophy'],
+    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff), null, 'rotate-ccw'],
+    ['Classement', 'ghost', () => showBoard(S.layout, S.diff), null, 'trophy'],
     ['Menu', 'ghost', showMenu, null, 'house'],
   ]);
   setTimeout(() => openModal('#m-end'), 1600);
@@ -563,11 +599,11 @@ async function victory() {
     const res = await fetch('/api/score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pseudo: S.pseudo, layout: S.layout, time: S.elapsed, moves: S.moves, score: S.score, hints: S.hints, shuffles: S.shuffles, hardcore: S.hc }),
+      body: JSON.stringify({ pseudo: S.pseudo, layout: S.layout, time: S.elapsed, moves: S.moves, score: S.score, hints: S.hints, shuffles: S.shuffles, difficulty: S.diff, hardcore: S.diff === 'hardcore' }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
-    setRank(data.improved ? `Classé n°${data.rank} en ${L.name}${S.hc ? ' Hardcore' : ''} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
+    setRank(data.improved ? `Classé n°${data.rank} en ${L.name}${S.hc ? ' ' + curDiff().name : ''} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
   } catch (e) {
     setRank(e.message && !/fetch|JSON/i.test(e.message) ? 'Score non enregistré : ' + e.message : "Impossible d'enregistrer le score (serveur injoignable).", 'info');
   }
@@ -575,6 +611,7 @@ async function victory() {
 
 function duelResult(msg) {
   if (S.duel.quitting) { S.duel.quitting = false; return; }
+  if (!S.game || S.mode !== 'duel') return; // déjà revenu au menu
   S.running = false;
   S.ended = true;
   select(null);
@@ -588,16 +625,19 @@ function duelResult(msg) {
   const serverOpp = msg.players && (win ? msg.players.loser : msg.players.winner);
   const theirs = { pseudo: S.duel.opponent, remaining: S.duel.oppRemaining, total, moves: 0, score: 0, maxCombo: 0, shuffles: 0, hints: 0, ...(S.duel.oppStats || {}), ...(serverOpp || {}) };
   const time = msg.reason === 'finished' ? msg.time : S.elapsed;
+  const gameRef = S.game;
   const reasons = {
     finished: win ? 'Tu as vidé le plateau en premier !' : `${msg.winner} a vidé le plateau avant toi.`,
     forfeit: win ? `${S.duel.opponent} a abandonné ou s'est déconnecté.` : 'Tu as abandonné.',
   };
 
   setTimeout(() => {
+    // le joueur a pu revenir au menu entre-temps : on n'affiche rien par-dessus
+    if (S.game !== gameRef || S.mode !== 'duel') return;
     const banner = $('#de-banner');
     banner.classList.toggle('lose', !win);
     $('#de-title').textContent = win ? 'Victoire !' : 'Défaite…';
-    $('#de-sub').textContent = `${LAYOUTS[S.layout].name}${S.hc ? ' · Hardcore' : ''} · ${fmtTime(time)}`;
+    $('#de-sub').textContent = `${LAYOUTS[S.layout].name}${S.hc ? ' · ' + curDiff().name : ''} · ${fmtTime(time)}`;
     $('#de-reason').textContent = reasons[msg.reason] || '';
     fillDuelCard($('#de-me'), mine, 'Toi', win);
     fillDuelCard($('#de-opp'), theirs, 'Adversaire', !win);
@@ -690,15 +730,15 @@ function countUp() {
 }
 
 // ================================================================ classement
-// Catégories : vue d'ensemble, une par forme (Normal / Hardcore), et les duels.
+// Catégories : vue d'ensemble, une par forme (Normal / Hardcore / Samouraï), et les duels.
 let boardCache = null;
-const BOARD = { cat: 'overview', hc: false };
+const BOARD = { cat: 'overview', diff: 'normal' };
 
-function catKey(layout, hc) { return hc ? layout + '_hc' : layout; }
+function catKey(layout, diff) { return layout + diffOf(diff).suffix; }
 
-async function showBoard(cat = 'overview', hc = BOARD.hc) {
+async function showBoard(cat = 'overview', diff = BOARD.diff) {
   BOARD.cat = cat;
-  BOARD.hc = hc;
+  BOARD.diff = DIFFS[diff] ? diff : 'normal';
   openModal('#m-board');
   buildBoardCats();
   $('#board-table').innerHTML = '<tr><td class="empty">Chargement…</td></tr>';
@@ -742,12 +782,12 @@ function buildBoardCats() {
   add('overview', 'Vue d’ensemble', 'layout-grid', null);
   let first = true;
   for (const [key, L] of Object.entries(LAYOUTS)) {
-    const n = boardCache ? (boardCache[catKey(key, BOARD.hc)] || []).length : null;
+    const n = boardCache ? (boardCache[catKey(key, BOARD.diff)] || []).length : null;
     add(key, L.name, L.icon || 'grid-3x3', n, first ? 'Formes' : null);
     first = false;
   }
   add('duel', 'Duels', 'swords', boardCache ? (boardCache.duel || []).length : null, 'Multijoueur');
-  $$('#board-diff button').forEach((x) => x.classList.toggle('active', (x.dataset.diff === 'hardcore') === BOARD.hc));
+  $$('#board-diff button').forEach((x) => x.classList.toggle('active', x.dataset.diff === BOARD.diff));
   refreshIcons();
 }
 
@@ -780,7 +820,7 @@ function renderBoard() {
     return;
   }
   if (overview) renderOverview();
-  else renderTable(cat === 'duel' ? 'duel' : catKey(cat, BOARD.hc), cat === 'duel');
+  else renderTable(cat === 'duel' ? 'duel' : catKey(cat, BOARD.diff), cat === 'duel');
   refreshIcons();
 }
 
@@ -790,7 +830,7 @@ function renderOverview() {
   box.innerHTML = '';
   const cats = [...Object.entries(LAYOUTS).map(([k, L]) => [k, L.name, L.icon]), ['duel', 'Duels', 'swords']];
   for (const [key, name, ico] of cats) {
-    const list = key === 'duel' ? boardCache.duel || [] : boardCache[catKey(key, BOARD.hc)] || [];
+    const list = key === 'duel' ? boardCache.duel || [] : boardCache[catKey(key, BOARD.diff)] || [];
     const card = document.createElement('button');
     card.className = 'ov-card';
     card.onclick = () => { BOARD.cat = key; buildBoardCats(); renderBoard(); };
@@ -900,7 +940,7 @@ function openDuel(code = S.pendingCode || '') {
   S.pendingCode = '';
   duelReset();
   $('#d-code').value = code;
-  $('#m-duel .sub').textContent = `Disposition : ${LAYOUTS[S.layout].name} (${LAYOUTS[S.layout].desc}) · ${S.hardcore ? 'Hardcore : aucun indice, 2 mélanges' : 'Normal'}. Même donne pour les deux joueurs — le premier qui vide le plateau gagne !`;
+  $('#m-duel .sub').textContent = `Disposition : ${LAYOUTS[S.layout].name} (${LAYOUTS[S.layout].desc}) · ${diffOf(S.difficulty).name}${S.difficulty !== 'normal' ? ' : ' + diffOf(S.difficulty).rules.toLowerCase() : ''}. Même donne pour les deux joueurs — le premier qui vide le plateau gagne !`;
   openModal('#m-duel');
   duel.connect();
 }
@@ -909,10 +949,11 @@ function onDuelMessage(msg) {
   switch (msg.type) {
     case 'created':
       S.duel.inRoom = true;
+      S.duel.myCode = msg.code;
       duelWaiting('Salon créé ! Envoie ce code à ton adversaire :', msg.code);
       break;
     case 'queued':
-      duelWaiting(`Recherche d'un adversaire (${LAYOUTS[msg.layout].name}${msg.hardcore ? ', Hardcore' : ''})…`);
+      duelWaiting(`Recherche d'un adversaire (${LAYOUTS[msg.layout].name}${msg.difficulty && msg.difficulty !== 'normal' ? ', ' + diffOf(msg.difficulty).name : ''})…`);
       break;
     case 'error':
       duelReset();
@@ -921,7 +962,7 @@ function onDuelMessage(msg) {
     case 'start': {
       S.duel = { ...S.duel, opponent: msg.opponent, oppRemaining: LAYOUTS[msg.layout].positions.length, hintReadyAt: 0, quitting: false, inRoom: true, oppLeft: false };
       history.replaceState(null, '', location.pathname);
-      newGame(msg.layout, msg.seed, 'duel', !!msg.hardcore);
+      newGame(msg.layout, msg.seed, 'duel', msg.difficulty || (msg.hardcore ? 'hardcore' : 'normal'));
       countdown(msg.countdown);
       break;
     }
@@ -975,6 +1016,7 @@ function countdown(ms) {
     if (S.mode === 'duel' && !S.ended) {
       S.elapsed = 0;
       startClock();
+      setDuelView('me', 1.2);
     }
     setTimeout(() => el.classList.add('hidden'), 800);
   }, Math.max(0, ms - (performance.now() - start)));
@@ -1070,12 +1112,18 @@ function selectLayout(key, withSound) {
 }
 
 // ================================================================ difficulté et volumes
-function selectDifficulty(hardcore, withSound) {
-  S.hardcore = hardcore;
-  localStorage.setItem('mj_hardcore', hardcore ? '1' : '0');
-  $$('#difficulty-select button').forEach((b) => b.classList.toggle('active', (b.dataset.diff === 'hardcore') === hardcore));
-  $('#menu .menu-card').classList.toggle('hc', hardcore);
-  if (withSound) { sound.init(); hardcore ? sound.error() : sound.select(); }
+function selectDifficulty(diff, withSound) {
+  S.difficulty = DIFFS[diff] ? diff : 'normal';
+  localStorage.setItem('mj_difficulty', S.difficulty);
+  $$('#difficulty-select button').forEach((b) => b.classList.toggle('active', b.dataset.diff === S.difficulty));
+  $('#menu .menu-card').classList.toggle('hc', S.difficulty === 'hardcore');
+  $('#menu .menu-card').classList.toggle('sm', S.difficulty === 'samurai');
+  if (withSound) {
+    sound.init();
+    if (S.difficulty === 'samurai') sound.sample('katana-degaine', { vol: 0.7 });
+    else if (S.difficulty === 'hardcore') sound.error();
+    else sound.select();
+  }
 }
 
 function bindVolumes() {
@@ -1112,7 +1160,7 @@ function bindVolumes() {
 function bindUI() {
   $('#pseudo').value = S.pseudo;
   buildLayoutPicker();
-  $$('#board-diff button').forEach((b) => (b.onclick = () => { BOARD.hc = b.dataset.diff === 'hardcore'; buildBoardCats(); renderBoard(); }));
+  $$('#board-diff button').forEach((b) => (b.onclick = () => { BOARD.diff = b.dataset.diff; buildBoardCats(); renderBoard(); }));
   $('#pseudo').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-solo').click(); });
   $('#btn-solo').onclick = () => {
     sound.init();
@@ -1120,7 +1168,7 @@ function bindUI() {
     newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo');
   };
   $('#btn-duel').onclick = () => { sound.init(); openDuel(); };
-  $('#btn-board').onclick = () => showBoard('overview', S.hardcore);
+  $('#btn-board').onclick = () => showBoard('overview', S.difficulty);
   $('#btn-rules').onclick = () => { openModal('#m-rules'); loadCredits(); };
   $$('[data-close]').forEach((b) => (b.onclick = () => {
     const modal = b.closest('.modal');
@@ -1134,14 +1182,15 @@ function bindUI() {
   setSoundIcon();
   bindVolumes();
   $('#opt-assist').onchange = (e) => { S.assist = e.target.checked; localStorage.setItem('mj_assist', S.assist ? '1' : '0'); refreshBoard(); };
-  $$('#difficulty-select button').forEach((b) => (b.onclick = () => selectDifficulty(b.dataset.diff === 'hardcore', true)));
-  selectDifficulty(S.hardcore, false);
+  $$('#difficulty-select button').forEach((b) => (b.onclick = () => selectDifficulty(b.dataset.diff, true)));
+  selectDifficulty(S.difficulty, false);
 
   // barre d'outils
   $('#t-hint').onclick = doHint;
   $('#t-shuffle').onclick = doShuffle;
   $('#t-undo').onclick = doUndo;
-  $('#t-cam').onclick = () => (duelLayout ? scene.fitDuelCamera(duelLayout, true, 0.9) : scene.fitCamera(true, 0.9));
+  $('#t-view').onclick = cycleDuelView;
+  $('#t-cam').onclick = () => (duelLayout ? setDuelView(S.duelView, 0.8) : scene.fitCamera(true, 0.9));
   $('#t-sound').onclick = (e) => {
     e.stopPropagation();
     sound.init();
@@ -1162,19 +1211,20 @@ function bindUI() {
   $('#s-undo').onclick = doUndo;
   $('#s-quit').onclick = () => (S.mode === 'solo' ? soloDefeat() : quitGame());
   $('#p-resume').onclick = () => togglePause(false);
-  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.hc); };
+  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.diff); };
   $('#p-quit').onclick = () => { S.paused = false; showMenu(); };
 
   // duel
-  $('#d-create').onclick = () => { duel.send({ type: 'create', pseudo: S.pseudo, layout: S.layout, hardcore: S.hardcore }); duelWaiting('Création du salon…'); };
+  $('#d-create').onclick = () => { duel.send({ type: 'create', pseudo: S.pseudo, layout: S.layout, difficulty: S.difficulty }); duelWaiting('Création du salon…'); };
   $('#d-join').onclick = () => {
     const code = $('#d-code').value.trim().toUpperCase();
     if (code.length !== 4) { $('#duel-error').textContent = 'Le code fait 4 caractères.'; return; }
+    if (code === S.duel.myCode) { $('#duel-error').textContent = "C'est le code de ton propre salon : envoie-le à ton adversaire !"; return; }
     duel.send({ type: 'join', code, pseudo: S.pseudo });
     duelWaiting('Connexion au salon…');
   };
   $('#d-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#d-join').click(); });
-  $('#d-quick').onclick = () => { duel.send({ type: 'quick', pseudo: S.pseudo, layout: S.layout, hardcore: S.hardcore }); duelWaiting('Recherche d\'un adversaire…'); };
+  $('#d-quick').onclick = () => { duel.send({ type: 'quick', pseudo: S.pseudo, layout: S.layout, difficulty: S.difficulty }); duelWaiting('Recherche d\'un adversaire…'); };
   $('#d-cancel').onclick = () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; duelReset(); };
   const code = () => $('#room-code').textContent.trim();
   $('#d-copy-code').onclick = (e) => copyWithFeedback(e.currentTarget, code(), 'Code copié !');
@@ -1197,8 +1247,9 @@ function bindUI() {
     if (k === 'h') doHint();
     else if (k === 'm') doShuffle();
     else if (k === 'z' || (e.ctrlKey && k === 'z')) doUndo();
-    else if (k === 'c') (duelLayout ? scene.fitDuelCamera(duelLayout, true, 0.9) : scene.fitCamera(true, 0.9));
+    else if (k === 'c') (duelLayout ? setDuelView(S.duelView, 0.8) : scene.fitCamera(true, 0.9));
     else if (k === 's') $('#t-sound').click();
+    else if (k === 'v' && duelLayout) cycleDuelView();
   });
   addEventListener('pointerdown', () => sound.init());
   addEventListener('blur', () => { if (S.mode === 'solo' && S.running && !S.ended) togglePause(true); });

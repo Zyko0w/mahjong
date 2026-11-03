@@ -567,7 +567,7 @@ export class Scene3D {
     const distD = (d * 0.75) / Math.tan(vfov / 2);
     const dist = Math.max(distW, distD, 9);
     this.controls.maxDistance = Math.max(34, dist * 1.4);
-    const target = new THREE.Vector3(0, 0.6, 0.3);
+    const target = new THREE.Vector3(0, 0.6, 0.3 + this.boardGroup.position.z);
     const end = new THREE.Vector3(0, Math.cos(polar) * dist, Math.sin(polar) * dist).add(target);
     this.controls.autoRotate = false;
     if (!animate) {
@@ -598,8 +598,48 @@ export class Scene3D {
     this.camAnim = { from: this.camera.position.clone(), to: end, tFrom: this.controls.target.clone(), tTo: target, t: 0, d: duration };
   }
 
+  // Vues du duel : 'me' (mon plateau, comme en solo), 'opp' (gros plan sur l'adversaire), 'all' (ensemble)
+  duelView(mode, layout = this.duelLayout, duration = 1.1) {
+    if (!layout) return;
+    this.duelLayout = layout;
+    if (mode === 'all') return this.fitDuelCamera(layout, true, duration);
+    if (mode === 'me') return this.fitCamera(true, duration);
+    // adversaire : on se place au-dessus de son plateau, face à lui
+    const target = new THREE.Vector3(0, 4.6, layout.avatarZ + 1.2);
+    const end = new THREE.Vector3(0, 9.8, layout.oppZ + 7.5);
+    this.controls.autoRotate = false;
+    this.camAnim = { from: this.camera.position.clone(), to: end, tFrom: this.controls.target.clone(), tTo: target, t: 0, d: duration };
+  }
+
+  // Petite fenêtre en direct sur l'adversaire (rendue dans la zone de l'élément HTML donné)
+  setPip(el, layout) {
+    this.pipEl = el || null;
+    if (!el || !layout) return;
+    if (!this.pipCam) this.pipCam = new THREE.PerspectiveCamera(36, 1.6, 0.1, 200);
+    this.pipCam.position.set(0, 8.6, layout.oppZ + 4.5);
+    this.pipCam.lookAt(0, 4.4, layout.avatarZ + 0.6);
+  }
+
+  renderPip() {
+    const el = this.pipEl;
+    if (!el || el.classList.contains('hidden') || !this.boardGroup.visible) return;
+    const r = el.getBoundingClientRect();
+    if (r.width < 10) return;
+    const r2 = this.renderer;
+    const y = innerHeight - r.bottom;
+    this.pipCam.aspect = r.width / r.height;
+    this.pipCam.updateProjectionMatrix();
+    r2.setScissorTest(true);
+    r2.setViewport(r.left, y, r.width, r.height);
+    r2.setScissor(r.left, y, r.width, r.height);
+    r2.render(this.scene, this.pipCam);
+    r2.setScissorTest(false);
+    r2.setViewport(0, 0, innerWidth, innerHeight);
+  }
+
   // Retour à la configuration solo
   resetDuel() {
+    this.setPip(null);
     this.duelLayout = null;
     this.setBoardOffset(0);
     this.setTableScale(1);
@@ -756,5 +796,6 @@ export class Scene3D {
     t.z = THREE.MathUtils.clamp(t.z, -7, 7);
     t.y = THREE.MathUtils.clamp(t.y, -0.5, 3);
     this.composer.render();
+    this.renderPip();
   }
 }
