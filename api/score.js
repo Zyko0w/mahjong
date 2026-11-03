@@ -1,6 +1,6 @@
 // POST /api/score — enregistre un score solo (fonction Vercel)
 import { parseScore, submitSolo } from '../lib/leaderboard.js';
-import { blobConfigured, updateBoard } from '../lib/blob-store.js';
+import { blobConfigured, blobEnvHint, updateBoard } from '../lib/blob-store.js';
 
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -13,7 +13,7 @@ function readBody(req) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Méthode non autorisée' });
-  if (!blobConfigured()) return res.status(503).json({ error: 'Classement non configuré : ajoute un store Vercel Blob au projet.' });
+  if (!blobConfigured()) return res.status(503).json({ error: 'Classement non configuré : aucun store Vercel Blob relié à ce déploiement. ' + blobEnvHint() });
   let entry;
   try {
     entry = parseScore(readBody(req));
@@ -25,6 +25,6 @@ export default async function handler(req, res) {
     return res.status(200).json(result);
   } catch (e) {
     console.error('score', e);
-    return res.status(500).json({ error: 'Enregistrement impossible, réessaie.' });
+    return res.status(500).json({ error: 'Enregistrement impossible : ' + (e && e.message ? e.message : e) });
   }
 }

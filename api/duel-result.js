@@ -2,7 +2,7 @@
 // Protégé par une clé partagée : variable DUEL_SECRET, identique des deux côtés.
 import crypto from 'node:crypto';
 import { cleanPseudo, recordDuel } from '../lib/leaderboard.js';
-import { blobConfigured, updateBoard } from '../lib/blob-store.js';
+import { blobConfigured, blobEnvHint, updateBoard } from '../lib/blob-store.js';
 
 function sameSecret(a, b) {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   const secret = process.env.DUEL_SECRET;
   const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!secret || !sameSecret(auth, secret)) return res.status(401).json({ error: 'Non autorisé' });
-  if (!blobConfigured()) return res.status(503).json({ error: 'Classement non configuré' });
+  if (!blobConfigured()) return res.status(503).json({ error: 'Classement non configuré : aucun store Vercel Blob relié à ce déploiement. ' + blobEnvHint() });
   const d = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const winner = cleanPseudo(d.winner), loser = cleanPseudo(d.loser);
   const time = Number(d.time) > 0 && Number(d.time) < 36000 ? Number(d.time) : null;

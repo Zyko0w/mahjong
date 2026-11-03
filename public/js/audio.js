@@ -21,6 +21,35 @@ export class Sound {
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => (this.playlist = p))
       .catch(() => {});
+    // On télécharge le premier morceau du menu dès l'ouverture de la page :
+    // au premier clic, la musique démarre instantanément.
+    this.playlistReady.then(() => this.preloadTrack('menu'));
+  }
+
+  songs(name) {
+    return ((this.playlist && this.playlist[name]) || []).map((e) => (typeof e === 'string' ? { file: e } : e));
+  }
+
+  ensureAudioEl() {
+    if (this.audioEl) return;
+    this.audioEl = new Audio();
+    this.audioEl.preload = 'auto';
+    this.audioEl.addEventListener('ended', () => this.nextSong());
+  }
+
+  makeQueue(name) {
+    this.queueMode = name;
+    this.queue = this.songs(name).sort(() => Math.random() - 0.5);
+    this.queueIdx = 0;
+  }
+
+  preloadTrack(name) {
+    if (!this.songs(name).length || this.ctx) return;
+    this.ensureAudioEl();
+    this.makeQueue(name);
+    this.audioEl.src = '/music/' + encodeURIComponent(this.queue[0].file);
+    this.audioEl.load();
+    this.preloaded = name;
   }
 
   init() {
@@ -121,32 +150,39 @@ export class Sound {
   async startMusic() {
     if (!this.ctx) return;
     await this.playlistReady;
-    const list = ((this.playlist && this.playlist[this.trackName]) || []).map((e) => (typeof e === 'string' ? { file: e } : e));
-    if (!list.length) return;
-    if (!this.audioEl) {
-      this.audioEl = new Audio();
-      this.audioEl.preload = 'auto';
+    if (!this.songs(this.trackName).length) return;
+    this.ensureAudioEl();
+    if (!this.audioConnected) {
       this.ctx.createMediaElementSource(this.audioEl).connect(this.musicBus);
-      this.audioEl.addEventListener('ended', () => this.nextSong());
+      this.audioConnected = true;
     }
-    if (this.queueMode !== this.trackName || !this.queue.length) {
-      this.queueMode = this.trackName;
-      this.queue = list.sort(() => Math.random() - 0.5);
-      this.queueIdx = -1;
+    if (this.preloaded === this.trackName) {
+      this.preloaded = null;
+      this.playCurrent(); // déjà téléchargé : démarrage immédiat
+    } else {
+      if (this.queueMode !== this.trackName || !this.queue.length) {
+        this.makeQueue(this.trackName);
+        this.queueIdx = -1;
+      }
+      this.nextSong();
     }
-    this.nextSong();
-    this.fadeMusic(1, 2);
+    this.fadeMusic(1, 0.8);
+  }
+
+  playCurrent() {
+    const song = this.queue[this.queueIdx];
+    if (!song) return;
+    this.audioEl.loop = this.queue.length === 1;
+    this.audioEl.play().catch(() => {});
+    const label = song.title ? song.title + (song.author ? ' — ' + song.author : '') : song.file.replace(/\.[^.]+$/, '');
+    this.onTrack && this.onTrack(label);
   }
 
   nextSong() {
     if (!this.queue.length || !this.musicOn) return;
     this.queueIdx = (this.queueIdx + 1) % this.queue.length;
-    const song = this.queue[this.queueIdx];
-    this.audioEl.loop = this.queue.length === 1;
-    this.audioEl.src = '/music/' + encodeURIComponent(song.file);
-    this.audioEl.play().catch(() => {});
-    const label = song.title ? song.title + (song.author ? ' — ' + song.author : '') : song.file.replace(/\.[^.]+$/, '');
-    this.onTrack && this.onTrack(label);
+    this.audioEl.src = '/music/' + encodeURIComponent(this.queue[this.queueIdx].file);
+    this.playCurrent();
   }
 
   stopMusic() {

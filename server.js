@@ -171,6 +171,7 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({
   server,
   path: '/ws',
+  maxPayload: 16 * 1024,
   verifyClient: ({ origin }) => !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(String(origin || '').replace(/\/+$/, '')),
 });
 const rooms = new Map();
@@ -211,6 +212,7 @@ function startMatch(room) {
   room.seed = crypto.randomInt(2 ** 31);
   room.state = 'playing';
   room.rematch.clear();
+  for (const p of room.players) p.stats = null;
   const countdown = 5000; // laisse le temps à la transition « VS » avant le 3-2-1
   room.startAt = Date.now() + countdown;
   for (const ws of room.players) {
@@ -230,8 +232,10 @@ function finishRoom(room, winner, loser, reason) {
   room.state = 'done';
   const time = Math.max(0, (Date.now() - room.startAt) / 1000);
   reportDuel(winner.pseudo, loser.pseudo, reason === 'finished' ? time : null);
-  send(winner, { type: 'result', result: 'win', reason, time, winner: winner.pseudo });
-  send(loser, { type: 'result', result: 'lose', reason, time, winner: winner.pseudo });
+  const card = (ws) => ({ pseudo: ws.pseudo, ...(ws.stats || {}) });
+  const players = { winner: card(winner), loser: card(loser) };
+  send(winner, { type: 'result', result: 'win', reason, time, winner: winner.pseudo, players });
+  send(loser, { type: 'result', result: 'lose', reason, time, winner: winner.pseudo, players });
 }
 
 wss.on('connection', (ws) => {
@@ -297,13 +301,33 @@ wss.on('connection', (ws) => {
       case 'progress': {
         const room = ws.room;
         if (!room || room.state !== 'playing') return;
-        send(other(room, ws), {
-          type: 'opp_progress',
+        const stats = {
           remaining: Number(msg.remaining) | 0,
           total: Number(msg.total) | 0,
           moves: Number(msg.moves) | 0,
           combo: Number(msg.combo) | 0,
-        });
+          score: Math.max(0, Number(msg.score) | 0),
+          maxCombo: Math.max(0, Number(msg.maxCombo) | 0),
+          hints: Math.max(0, Number(msg.hints) | 0),
+          shuffles: Math.max(0, Number(msg.shuffles) | 0),
+        };
+        ws.stats = stats;
+        send(other(room, ws), { type: 'opp_progress', ...stats });
+        break;
+      }
+      case 'act': {
+        // Actions en direct (sélection, paire, annulation, mélange) pour le plateau vu en face
+        const room = ws.room;
+        if (!room || room.state !== 'playing') return;
+        const id = (v) => (Number.isInteger(v) && v >= 0 && v < 200 ? v : null);
+        let out = null;
+        if (msg.k === 'sel') out = { k: 'sel', id: id(msg.id) };
+        else if ((msg.k === 'match' || msg.k === 'undo') && id(msg.a) !== null && id(msg.b) !== null) out = { k: msg.k, a: msg.a, b: msg.b };
+        else if (msg.k === 'shuf' && Array.isArray(msg.faces) && msg.faces.length <= 144) {
+          const faces = msg.faces.filter((p) => Array.isArray(p) && id(p[0]) !== null && /^[a-z][A-Za-z0-9]{1,2}$/.test(String(p[1])));
+          out = { k: 'shuf', faces };
+        }
+        if (out) send(other(room, ws), { type: 'opp_act', ...out });
         break;
       }
       case 'finished': {

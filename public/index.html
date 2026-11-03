@@ -22,6 +22,8 @@
     <div class="loader-glyph">麻將</div>
     <div class="loader-bar"><span></span></div>
     <p id="loader-text">Préparation du temple…</p>
+    <button class="btn primary big" id="enter-btn"><i data-lucide="door-open"></i> Entrer dans le temple</button>
+    <small class="enter-hint">Son activé · appuie sur Entrée</small>
   </div>
 
   <!-- Menu principal -->
@@ -169,7 +171,10 @@
         <div class="room-code hidden" id="room-code-box">
           <small>Code du salon</small>
           <b id="room-code">----</b>
-          <button class="btn ghost small" id="d-copy"><i data-lucide="copy"></i> Copier le lien d'invitation</button>
+          <div class="row center">
+            <button class="btn gold small" id="d-copy-code"><i data-lucide="copy"></i> <span>Copier le code</span></button>
+            <button class="btn ghost small" id="d-copy"><i data-lucide="link"></i> <span>Copier le lien</span></button>
+          </div>
         </div>
         <button class="btn ghost" id="d-cancel">Annuler</button>
       </div>
@@ -232,6 +237,20 @@
       <div class="end-stats" id="end-stats"></div>
       <p class="end-rank" id="end-rank"></p>
       <div class="row center" id="end-actions"></div>
+    </div>
+  </div>
+
+  <!-- Fin de duel : les deux joueurs face à face -->
+  <div class="modal hidden" id="m-duel-end">
+    <div class="duel-end">
+      <div class="de-banner" id="de-banner"><span id="de-title">Victoire !</span><small id="de-sub"></small></div>
+      <div class="de-cards">
+        <div class="de-card me" id="de-me"></div>
+        <div class="de-vs">戰</div>
+        <div class="de-card opp" id="de-opp"></div>
+      </div>
+      <p class="de-reason" id="de-reason"></p>
+      <div class="row center" id="de-actions"></div>
     </div>
   </div>
 

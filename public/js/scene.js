@@ -12,6 +12,8 @@ import { buildProps } from './props.js';
 
 const TW = 1.0, TD = 1.34, TH = 0.72, GAP = 0.035;
 const SX = (TW + GAP) / 2, SZ = (TD + GAP) / 2;
+export const TILE = { TW, TD, TH, GAP, SX, SZ };
+export const TABLE_RADIUS = 12.7;
 const IVORY = new THREE.Color('#f4ead2');
 const GOLD = new THREE.Color(1.6, 0.95, 0.22);
 const CYAN = new THREE.Color(0.15, 1.1, 1.3);
@@ -74,6 +76,9 @@ export class Scene3D {
     this.tiles = [];
     this.pickables = [];
     this.tweens = [];
+    this.updaters = [];
+    this.tableScaleTarget = 1;
+    this.duelLayout = null;
     this.hovered = null;
     this.time = 0;
     this.lastFrame = performance.now();
@@ -139,7 +144,9 @@ export class Scene3D {
     const table = new THREE.Mesh(new THREE.CylinderGeometry(13.6, 13.2, 0.9, 96), woodMat);
     table.position.y = -0.45;
     table.receiveShadow = true;
-    s.add(table);
+    const tg = (this.tableGroup = new THREE.Group());
+    s.add(tg);
+    tg.add(table);
     const feltTex = new THREE.CanvasTexture(feltCanvas());
     feltTex.colorSpace = THREE.SRGBColorSpace;
     feltTex.anisotropy = 8;
@@ -147,15 +154,15 @@ export class Scene3D {
     felt.rotation.x = -Math.PI / 2;
     felt.position.y = 0.003;
     felt.receiveShadow = true;
-    s.add(felt);
+    tg.add(felt);
     const goldMat = new THREE.MeshStandardMaterial({ color: '#d6a54a', metalness: 1, roughness: 0.28 });
     const rim = new THREE.Mesh(new THREE.TorusGeometry(12.85, 0.13, 12, 128), goldMat);
     rim.rotation.x = Math.PI / 2;
     rim.position.y = 0.05;
-    s.add(rim);
+    tg.add(rim);
     const foot = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 4.2, 6, 48), woodMat);
     foot.position.y = -3.9;
-    s.add(foot);
+    tg.add(foot);
 
     // Sol
     const floor = new THREE.Mesh(
@@ -335,6 +342,40 @@ export class Scene3D {
     this.hovered = null;
   }
 
+  // Compile tous les shaders et dessine quelques images avant d'afficher la page
+  async warmup() {
+    try { await this.renderer.compileAsync(this.scene, this.camera); } catch { /* ancien navigateur : compilation au premier rendu */ }
+    for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r));
+  }
+
+  // Crée le maillage d'une tuile (ivoire + dos jade + face), sans l'ajouter à la scène
+  createTile(face) {
+    const group = new THREE.Group();
+    const bodyMat = new THREE.MeshPhysicalMaterial({ color: IVORY.clone(), roughness: 0.3, clearcoat: 0.55, clearcoatRoughness: 0.22, emissive: new THREE.Color(0) });
+    const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTexture(face), roughness: 0.38, emissive: new THREE.Color(0) });
+    const body = new THREE.Mesh(this.bodyGeo, bodyMat);
+    body.position.y = 0.13;
+    const back = new THREE.Mesh(this.backGeo, this.backMat);
+    back.position.y = -0.2;
+    const faceMesh = new THREE.Mesh(this.faceGeo, faceMat);
+    faceMesh.position.y = 0.363;
+    for (const m of [body, back]) { m.castShadow = true; m.receiveShadow = true; }
+    faceMesh.receiveShadow = true;
+    group.add(body, back, faceMesh);
+    return { group, bodyMat, faceMat, meshes: [body, back, faceMesh] };
+  }
+
+  // Décalage du plateau du joueur (en duel il se rapproche de la caméra)
+  setBoardOffset(z) { this.boardGroup.position.set(0, 0, z); }
+
+  // Agrandit la table en douceur (duel : deux plateaux dessus)
+  setTableScale(k) { this.tableScaleTarget = k; }
+
+  addUpdater(fn) {
+    this.updaters.push(fn);
+    return () => { this.updaters = this.updaters.filter((u) => u !== fn); };
+  }
+
   buildBoard(game) {
     this.clearBoard();
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -346,18 +387,8 @@ export class Scene3D {
     this.boardSize = { w: (maxX - minX) * SX, d: (maxY - minY) * SZ };
 
     for (const t of game.tiles) {
-      const group = new THREE.Group();
-      const bodyMat = new THREE.MeshPhysicalMaterial({ color: IVORY.clone(), roughness: 0.3, clearcoat: 0.55, clearcoatRoughness: 0.22, emissive: new THREE.Color(0) });
-      const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTexture(game.face(t.id)), roughness: 0.38, emissive: new THREE.Color(0) });
-      const body = new THREE.Mesh(this.bodyGeo, bodyMat);
-      body.position.y = 0.13;
-      const back = new THREE.Mesh(this.backGeo, this.backMat);
-      back.position.y = -0.2;
-      const face = new THREE.Mesh(this.faceGeo, faceMat);
-      face.position.y = 0.363;
-      for (const m of [body, back]) { m.castShadow = true; m.receiveShadow = true; }
-      face.receiveShadow = true;
-      group.add(body, back, face);
+      const { group, bodyMat, faceMat, meshes } = this.createTile(game.face(t.id));
+      const [body, back, face] = meshes;
       const base = new THREE.Vector3((t.x + 1 - cx) * SX, TH / 2 + t.z * TH + 0.004, (t.y + 1 - cy) * SZ);
       group.position.copy(base);
       group.rotation.y = (Math.random() - 0.5) * 0.012;
@@ -424,9 +455,10 @@ export class Scene3D {
           T.removed = true;
           T.anim = false;
         }
-        this.burst(mid, { count: 70, color: '#ffc04a', speed: 5.5, life: 1.1 });
-        this.burst(mid, { count: 25, color: '#ff6a3a', speed: 3, life: 0.8 });
-        resolve(mid);
+        const world = mid.clone().add(this.boardGroup.position);
+        this.burst(world, { count: 70, color: '#ffc04a', speed: 5.5, life: 1.1 });
+        this.burst(world, { count: 25, color: '#ff6a3a', speed: 3, life: 0.8 });
+        resolve(world);
       });
     });
   }
@@ -544,6 +576,33 @@ export class Scene3D {
       return;
     }
     this.camAnim = { from: this.camera.position.clone(), to: end, tFrom: this.controls.target.clone(), tTo: target, t: 0, d: duration };
+  }
+
+  fitDuelCamera(layout, animate = true, duration = 1.8) {
+    const vfov = THREE.MathUtils.degToRad(this.camera.fov);
+    const aspect = this.camera.aspect;
+    const polar = 0.9;
+    const distW = (layout.width * 0.58) / (Math.tan(vfov / 2) * aspect);
+    const distD = (layout.depth * 0.6) / Math.tan(vfov / 2);
+    const dist = Math.max(distW, distD, 16);
+    this.controls.maxDistance = Math.max(40, dist * 1.4);
+    const target = new THREE.Vector3(0, 2.0, layout.focusZ);
+    const end = new THREE.Vector3(0, Math.cos(polar) * dist, Math.sin(polar) * dist).add(target);
+    this.controls.autoRotate = false;
+    this.duelLayout = layout;
+    if (!animate) {
+      this.camera.position.copy(end);
+      this.controls.target.copy(target);
+      return;
+    }
+    this.camAnim = { from: this.camera.position.clone(), to: end, tFrom: this.controls.target.clone(), tTo: target, t: 0, d: duration };
+  }
+
+  // Retour à la configuration solo
+  resetDuel() {
+    this.duelLayout = null;
+    this.setBoardOffset(0);
+    this.setTableScale(1);
   }
 
   // Vue cinématique basse pour le menu : on voit le décor, puis rotation lente
@@ -687,6 +746,9 @@ export class Scene3D {
     }
     this.updateParticles(dt);
     this.props.update(dt, this.time);
+    const ts = this.tableGroup.scale.x + (this.tableScaleTarget - this.tableGroup.scale.x) * Math.min(1, dt * 3);
+    this.tableGroup.scale.set(ts, 1, ts);
+    for (const u of this.updaters) u(dt, this.time);
 
     this.controls.update();
     const t = this.controls.target;

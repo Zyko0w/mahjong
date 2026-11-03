@@ -1,5 +1,6 @@
 // Contrôleur principal : menus, partie, score, classement, duel.
 import { Scene3D } from './scene.js';
+import { OpponentView, computeDuelLayout } from './opponent.js';
 import { MahjongGame, LAYOUTS, FACE_NAMES } from './game.js';
 import { Sound } from './audio.js';
 import { DuelClient } from './net.js';
@@ -9,6 +10,14 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const sound = new Sound();
 let scene;
+let opp = null; // adversaire assis en face (duel)
+let duelLayout = null;
+
+function disposeOpponent() {
+  if (opp) { opp.dispose(); opp = null; }
+  duelLayout = null;
+  if (scene) scene.resetDuel();
+}
 
 const PENALTY = { hint: 30, shuffle: 80, undo: 20 };
 const COMBO_WINDOW = 5000;
@@ -65,6 +74,41 @@ function toast(text, big = false, iconName = null, extraClass = '') {
   setTimeout(() => el.remove(), extraClass === "music" ? 5100 : 3100);
 }
 
+// Copie dans le presse-papiers, avec une méthode de secours quand l'API moderne est bloquée
+// (site en http://, navigateur intégré, iframe…). Renvoie true si la copie a réussi.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* on tente la méthode de secours */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+async function copyWithFeedback(btn, text, okMsg) {
+  const ok = await copyText(text);
+  const label = btn.querySelector('span');
+  const old = btn.dataset.label || (btn.dataset.label = label.textContent);
+  label.textContent = ok ? 'Copié !' : 'Copie impossible';
+  btn.classList.toggle('copied', ok);
+  if (ok) toast(okMsg, false, 'check');
+  else toast(`Copie bloquée par le navigateur : sélectionne « ${text} » à la main.`, false, 'info');
+  clearTimeout(btn._t);
+  btn._t = setTimeout(() => { label.textContent = old; btn.classList.remove('copied'); }, 1800);
+}
+
 function setSoundIcon() {
   const box = $('#t-sound-ico');
   box.innerHTML = '';
@@ -92,15 +136,16 @@ function openModal(id) {
 }
 function closeModals() { openModal(null); }
 
-function showMenu() {
+function showMenu(reveal = true) {
   closeModals();
   $('#hud').classList.add('hidden');
-  $('#menu').classList.remove('hidden');
+  $('#menu').classList.toggle('hidden', !reveal);
   $('#countdown').classList.add('hidden');
   S.running = false;
   S.ended = true;
   S.selected = null;
   document.body.style.cursor = 'default';
+  disposeOpponent();
   sound.setTrack('menu');
   // Plateau de démonstration en fond
   const demo = new MahjongGame('classic', (Math.random() * 2 ** 31) | 0);
@@ -171,7 +216,7 @@ async function newGame(layout, seed, mode, hardcore = S.hardcore) {
   S.seed = seed;
   S.game = new MahjongGame(layout, seed);
   sound.setTrack(mode);
-  Object.assign(S, { selected: null, running: false, paused: false, busy: true, ended: false, pending: 0, moves: 0, score: 0, combo: 0, lastMatch: 0, hints: 0, shuffles: 0, undos: 0, elapsed: 0 });
+  Object.assign(S, { selected: null, running: false, paused: false, busy: true, ended: false, pending: 0, moves: 0, score: 0, combo: 0, maxCombo: 0, lastMatch: 0, hints: 0, shuffles: 0, undos: 0, elapsed: 0 });
   closeModals();
   const L = LAYOUTS[layout];
   const tr = playTransition(
@@ -189,14 +234,24 @@ async function newGame(layout, seed, mode, hardcore = S.hardcore) {
   $('#hardcore-tag').classList.toggle('hidden', !hardcore);
   $('#selected-info').textContent = '';
   scene.controls.autoRotate = false;
+  disposeOpponent();
   scene.buildBoard(S.game);
   scene.setBoardVisible(true);
+  if (mode === 'duel') {
+    // Duel : notre plateau devant nous, celui de l'adversaire en face, sur une table agrandie
+    duelLayout = computeDuelLayout(S.game);
+    scene.setBoardOffset(duelLayout.ourZ);
+    scene.setTableScale(duelLayout.tableScale);
+    opp = new OpponentView(scene, new MahjongGame(layout, seed), duelLayout, S.duel.opponent || 'Adversaire');
+  }
   refreshBoard();
   updateHUD();
   scene.camera.position.set(0, 30, 34); // la caméra plonge vers la table à l'ouverture des panneaux
   await tr.opening;
   if (S.game !== gameRef) return;
-  scene.fitCamera(true, 1.8);
+  if (duelLayout) scene.fitDuelCamera(duelLayout, true, 1.8);
+  else scene.fitCamera(true, 1.8);
+  if (opp) opp.intro();
   await scene.intro();
   if (S.game && S.mode === mode && mode === 'solo' && !S.ended) startClock();
   S.busy = false;
@@ -242,7 +297,12 @@ function updateHUD() {
 
 function sendProgress() {
   if (S.mode !== 'duel') return;
-  duel.send({ type: 'progress', remaining: S.game.remaining, total: S.game.total, moves: S.moves, combo: S.combo });
+  duel.send({ type: 'progress', remaining: S.game.remaining, total: S.game.total, moves: S.moves, combo: S.combo, score: S.score, maxCombo: S.maxCombo, hints: S.hints, shuffles: S.shuffles });
+}
+
+// Actions envoyées à l'adversaire pour qu'il voie notre plateau bouger en direct
+function sendAct(msg) {
+  if (S.mode === 'duel' && S.running && !S.ended) duel.send({ type: 'act', ...msg });
 }
 
 function canPlay() {
@@ -252,6 +312,7 @@ function canPlay() {
 function select(id) {
   if (S.selected !== null) scene.setSelected(S.selected, false);
   S.selected = id;
+  sendAct({ k: 'sel', id });
   if (id !== null) {
     scene.setSelected(id, true);
     $('#selected-info').textContent = FACE_NAMES[S.game.face(id)] || '';
@@ -286,11 +347,13 @@ async function doMatch(a, b) {
   const g = S.game;
   select(null);
   g.match(a, b);
+  sendAct({ k: 'match', a, b });
   scene.clearHints();
   S.moves++;
   const now = performance.now();
   S.combo = now - S.lastMatch < COMBO_WINDOW ? S.combo + 1 : 1;
   S.lastMatch = now;
+  S.maxCombo = Math.max(S.maxCombo, S.combo);
   const mult = Math.min(S.combo, 5);
   const pts = 20 * mult;
   S.score += pts;
@@ -373,6 +436,7 @@ async function doShuffle() {
   S.busy = true;
   select(null);
   const ids = S.game.shuffle();
+  sendAct({ k: 'shuf', faces: ids.map((id) => [id, S.game.face(id)]) });
   S.shuffles++;
   S.combo = 0;
   if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.shuffle);
@@ -392,6 +456,7 @@ function doUndo() {
   closeModals();
   select(null);
   scene.restorePair(last[0], last[1]);
+  sendAct({ k: 'undo', a: last[0], b: last[1] });
   S.undos++;
   S.moves++;
   S.combo = 0;
@@ -515,32 +580,113 @@ function duelResult(msg) {
   select(null);
   const win = msg.result === 'win';
   if (win) { scene.celebrate(); sound.win(); } else sound.lose();
+  if (opp) opp.react(win ? 'lose' : 'win');
+
+  // Statistiques : les nôtres en local, celles de l'adversaire envoyées par le serveur
+  const total = S.game ? S.game.total : 0;
+  const mine = { pseudo: S.pseudo, score: S.score, remaining: S.game ? S.game.remaining : 0, total, moves: S.moves, maxCombo: S.maxCombo, shuffles: S.shuffles, hints: S.hints };
+  const serverOpp = msg.players && (win ? msg.players.loser : msg.players.winner);
+  const theirs = { pseudo: S.duel.opponent, remaining: S.duel.oppRemaining, total, moves: 0, score: 0, maxCombo: 0, shuffles: 0, hints: 0, ...(S.duel.oppStats || {}), ...(serverOpp || {}) };
+  const time = msg.reason === 'finished' ? msg.time : S.elapsed;
   const reasons = {
     finished: win ? 'Tu as vidé le plateau en premier !' : `${msg.winner} a vidé le plateau avant toi.`,
     forfeit: win ? `${S.duel.opponent} a abandonné ou s'est déconnecté.` : 'Tu as abandonné.',
   };
-  $('#end-glyph').textContent = win ? '勝' : '敗';
-  $('#end-glyph').classList.toggle('lose', !win);
-  $('#end-title').textContent = win ? 'Victoire en duel !' : 'Défaite…';
-  $('#end-sub').textContent = reasons[msg.reason] || '';
-  $('#end-stats').innerHTML =
-    statCell('Temps', fmtTime(win && msg.reason === 'finished' ? msg.time : S.elapsed), true) +
-    statCell('Tes coups', S.moves) +
-    statCell('Tes tuiles', S.game ? S.game.remaining : '-') +
-    statCell('Adversaire', S.duel.oppRemaining + ' tuiles');
-  setRank(win ? '+1 victoire au classement des duels' : '', win ? 'medal' : null);
-  setEndActions([
-    ['Revanche', 'primary', () => {
+
+  setTimeout(() => {
+    const banner = $('#de-banner');
+    banner.classList.toggle('lose', !win);
+    $('#de-title').textContent = win ? 'Victoire !' : 'Défaite…';
+    $('#de-sub').textContent = `${LAYOUTS[S.layout].name}${S.hc ? ' · Hardcore' : ''} · ${fmtTime(time)}`;
+    $('#de-reason').textContent = reasons[msg.reason] || '';
+    fillDuelCard($('#de-me'), mine, 'Toi', win);
+    fillDuelCard($('#de-opp'), theirs, 'Adversaire', !win);
+    // relance les animations d'entrée
+    for (const el of [banner, $('#de-me'), $('#de-opp'), $('.de-vs'), $('#de-reason'), $('#de-actions')]) {
+      el.style.animation = 'none';
+      void el.offsetWidth;
+      el.style.animation = '';
+    }
+    const box = $('#de-actions');
+    box.innerHTML = '';
+    const mk = (label, cls, ico, fn, id) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn ' + cls;
+      if (id) btn.id = id;
+      btn.append(icon(ico), ' ' + label);
+      btn.onclick = fn;
+      box.appendChild(btn);
+      return btn;
+    };
+    const re = mk('Revanche', 'primary', 'swords', () => {
       duel.send({ type: 'rematch' });
-      const b = $('#btn-rematch');
-      b.disabled = true;
-      b.textContent = 'En attente…';
-    }, 'btn-rematch', 'swords'],
-    ['Classement', 'ghost', () => showBoard('duel'), null, 'trophy'],
-    ['Menu', 'ghost', () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; showMenu(); }, null, 'house'],
-  ]);
-  if (S.duel.oppLeft) $('#btn-rematch').disabled = true;
-  setTimeout(() => openModal('#m-end'), win ? 1400 : 600);
+      re.disabled = true;
+      re.textContent = 'En attente…';
+    }, 'btn-rematch');
+    if (S.duel.oppLeft) re.disabled = true;
+    mk('Classement', 'ghost', 'trophy', () => showBoard('duel'));
+    mk('Menu', 'ghost', 'house', () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; showMenu(); });
+    refreshIcons();
+    openModal('#m-duel-end');
+    countUp();
+  }, win ? 1300 : 700);
+}
+
+function fillDuelCard(card, p, tag, isWinner) {
+  card.classList.toggle('winner', isWinner);
+  card.classList.toggle('loser', !isWinner);
+  card.innerHTML = '';
+  if (isWinner) {
+    const crown = document.createElement('div');
+    crown.className = 'de-crown';
+    crown.appendChild(icon('crown'));
+    card.appendChild(crown);
+  }
+  const name = document.createElement('div');
+  name.className = 'de-name';
+  name.textContent = p.pseudo || '—';
+  const t = document.createElement('div');
+  t.className = 'de-tag';
+  t.textContent = isWinner ? tag + ' · vainqueur' : tag;
+  const score = document.createElement('div');
+  score.className = 'de-score';
+  score.innerHTML = '<span data-count="' + (p.score | 0) + '">0</span><small>POINTS</small>';
+  const cleared = Math.max(0, (p.total || 0) - (p.remaining || 0));
+  const bar = document.createElement('div');
+  bar.className = 'de-progress';
+  bar.innerHTML = '<span></span>';
+  requestAnimationFrame(() => (bar.firstChild.style.width = (p.total ? (cleared / p.total) * 100 : 0) + '%'));
+  const stats = document.createElement('div');
+  stats.className = 'de-stats';
+  const rows = [
+    ['Tuiles retirées', `${cleared}/${p.total || '?'}`],
+    ['Coups', p.moves | 0],
+    ['Combo max', '×' + Math.min(5, p.maxCombo | 0)],
+    ['Mélanges', p.shuffles | 0],
+  ];
+  for (const [k, v] of rows) {
+    const d = document.createElement('div');
+    const sp = document.createElement('span');
+    sp.textContent = k;
+    const bb = document.createElement('b');
+    bb.textContent = v;
+    d.append(sp, bb);
+    stats.appendChild(d);
+  }
+  card.append(name, t, score, bar, stats);
+}
+
+// Les scores défilent jusqu'à leur valeur finale
+function countUp() {
+  const els = $$('#m-duel-end [data-count]');
+  const start = performance.now() + 700;
+  const step = (now) => {
+    const k = Math.min(1, Math.max(0, (now - start) / 1100));
+    const e = 1 - (1 - k) ** 3;
+    for (const el of els) el.textContent = Math.round(+el.dataset.count * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 // ================================================================ classement
@@ -779,7 +925,15 @@ function onDuelMessage(msg) {
       countdown(msg.countdown);
       break;
     }
+    case 'opp_act':
+      if (!opp) break;
+      if (msg.k === 'sel') opp.select(msg.id);
+      else if (msg.k === 'match') opp.match(msg.a, msg.b);
+      else if (msg.k === 'undo') opp.undo(msg.a, msg.b);
+      else if (msg.k === 'shuf') opp.shuffle(msg.faces);
+      break;
     case 'opp_progress':
+      S.duel.oppStats = msg;
       S.duel.oppRemaining = msg.remaining;
       updateHUD();
       if (msg.combo >= 4 && msg.combo % 2 === 0) toast(`${S.duel.opponent} enchaîne un combo ×${Math.min(msg.combo, 5)} !`, false, 'flame');
@@ -798,7 +952,7 @@ function onDuelMessage(msg) {
       { const b = $('#btn-rematch'); if (b) { b.disabled = true; b.textContent = 'Adversaire parti'; } }
       break;
     case 'opp_emote':
-      { const e = EMOTES[msg.emote]; if (e) toast(`${S.duel.opponent} : ${e[1]}`, true, e[0]); }
+      { const e = EMOTES[msg.emote]; if (e) { toast(`${S.duel.opponent} : ${e[1]}`, false, e[0]); if (opp) opp.emote(e[1]); } }
       break;
   }
 }
@@ -972,7 +1126,7 @@ function bindUI() {
     const modal = b.closest('.modal');
     if (modal.id === 'm-duel') { duel.send({ type: 'cancel' }); S.duel.inRoom = false; }
     modal.classList.add('hidden');
-    if (S.ended && S.game) openModal('#m-end');
+    if (S.ended && S.game) openModal(S.mode === 'duel' ? '#m-duel-end' : '#m-end');
   }));
 
   // options
@@ -987,7 +1141,7 @@ function bindUI() {
   $('#t-hint').onclick = doHint;
   $('#t-shuffle').onclick = doShuffle;
   $('#t-undo').onclick = doUndo;
-  $('#t-cam').onclick = () => scene.fitCamera(true, 0.9);
+  $('#t-cam').onclick = () => (duelLayout ? scene.fitDuelCamera(duelLayout, true, 0.9) : scene.fitCamera(true, 0.9));
   $('#t-sound').onclick = (e) => {
     e.stopPropagation();
     sound.init();
@@ -1022,10 +1176,10 @@ function bindUI() {
   $('#d-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#d-join').click(); });
   $('#d-quick').onclick = () => { duel.send({ type: 'quick', pseudo: S.pseudo, layout: S.layout, hardcore: S.hardcore }); duelWaiting('Recherche d\'un adversaire…'); };
   $('#d-cancel').onclick = () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; duelReset(); };
-  $('#d-copy').onclick = async () => {
-    const link = `${location.origin}/?duel=${$('#room-code').textContent}`;
-    try { await navigator.clipboard.writeText(link); toast('Lien copié !', false, 'copy'); } catch { prompt('Copie ce lien :', link); }
-  };
+  const code = () => $('#room-code').textContent.trim();
+  $('#d-copy-code').onclick = (e) => copyWithFeedback(e.currentTarget, code(), 'Code copié !');
+  $('#room-code').onclick = () => copyWithFeedback($('#d-copy-code'), code(), 'Code copié !');
+  $('#d-copy').onclick = (e) => copyWithFeedback(e.currentTarget, `${location.origin}/?duel=${code()}`, 'Lien copié !');
   $$('#emotes button').forEach((b) => (b.onclick = () => {
     duel.send({ type: 'chat', emote: b.dataset.emote });
     toast(`Toi : ${EMOTES[b.dataset.emote][1]}`, false, EMOTES[b.dataset.emote][0]);
@@ -1043,7 +1197,7 @@ function bindUI() {
     if (k === 'h') doHint();
     else if (k === 'm') doShuffle();
     else if (k === 'z' || (e.ctrlKey && k === 'z')) doUndo();
-    else if (k === 'c') scene.fitCamera(true, 0.9);
+    else if (k === 'c') (duelLayout ? scene.fitDuelCamera(duelLayout, true, 0.9) : scene.fitCamera(true, 0.9));
     else if (k === 's') $('#t-sound').click();
   });
   addEventListener('pointerdown', () => sound.init());
@@ -1082,12 +1236,31 @@ async function init() {
     onLand: (kind) => (kind === 'firework' ? sound.firework() : sound.land()),
   });
   bindUI();
-  showMenu();
+  showMenu(false); // plateau de démonstration en fond, menu encore caché
+  step('Allumage des lanternes…');
+  await scene.warmup(); // shaders compilés + premières images dessinées : plus d'écran uni
   clearTimeout(window.mjLoadTimer);
-  $('#loader').classList.add('fade');
-  setTimeout(() => $('#loader').remove(), 900);
-  const code = new URLSearchParams(location.search).get('duel');
-  if (code) openDuel(code.toUpperCase().slice(0, 4));
+
+  // Porte d'entrée : ce clic autorise le son (règle des navigateurs), la musique part tout de suite
+  const loader = $('#loader');
+  loader.classList.add('ready');
+  const enter = () => {
+    if (loader.classList.contains('fade')) return;
+    removeEventListener('keydown', onKey);
+    sound.init();
+    sound.select();
+    loader.classList.add('fade');
+    setTimeout(() => loader.remove(), 900);
+    setTimeout(() => {
+      $('#menu').classList.remove('hidden');
+      const code = new URLSearchParams(location.search).get('duel');
+      if (code) openDuel(code.toUpperCase().slice(0, 4));
+    }, 350);
+  };
+  const onKey = (e) => { if (e.key === 'Enter' || e.key === ' ') enter(); };
+  $('#enter-btn').onclick = enter;
+  addEventListener('keydown', onKey);
+  $('#enter-btn').focus();
 }
 
 init().catch((e) => {

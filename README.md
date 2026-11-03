@@ -55,6 +55,8 @@ Les offres gratuites de Render mettent le serveur en veille après 15 minutes d'
 - **Transitions** : au lancement d'une partie, des panneaux de laque se ferment, avec un coup de katana, un cri de samouraï, un sceau et un gong. En duel, un écran « VS » rouge contre jade, avec un sabre dégainé et un grand gong au GO.
 - **Classement sans base de données** (`data/leaderboard.json`) : il est organisé par catégorie, avec une vue d'ensemble (podium de chaque forme), un classement par forme en Normal et en Hardcore, et un classement des duels.
 - **Duel en direct** (WebSocket) : on crée un salon et on partage son code ou son lien d'invitation, ou on lance une partie rapide. Les deux joueurs ont la même donne, voient la progression de l'adversaire en direct et peuvent s'envoyer des émotes. Le premier qui vide le plateau gagne, puis une revanche est possible.
+- **Duel immersif** : l'adversaire est assis en face, de l'autre côté de la table (`public/js/opponent.js`). Son plateau est rejoué en direct : sélections, paires, annulations, mélanges. Ses bras vont chercher les tuiles, ses émotes s'affichent dans une bulle au-dessus de lui, et il réagit à la victoire ou à la défaite. À la fin, un écran montre les deux joueurs côte à côte avec les scores et le vainqueur couronné.
+- **Entrée dans le temple** : la page attend que le décor 3D soit entièrement dessiné. Le bouton « Entrer » lance aussitôt la musique, déjà téléchargée en arrière-plan (les navigateurs interdisent le son avant un premier clic).
 
 ## Ambiance
 
