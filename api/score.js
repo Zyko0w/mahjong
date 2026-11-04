@@ -24,6 +24,7 @@ export default async function handler(req, res) {
     const result = await updateBoard((board) => submitSolo(board, entry));
     return res.status(200).json(result);
   } catch (e) {
+    if (e && e.status) return res.status(e.status).json({ error: e.message });
     console.error('score', e);
     return res.status(500).json({ error: 'Enregistrement impossible : ' + (e && e.message ? e.message : e) });
   }

@@ -2,7 +2,7 @@
 export const FACE_W = 256;
 export const FACE_H = 344;
 const CJK = '"Noto Serif SC","Microsoft YaHei","PingFang SC","Hiragino Sans GB","SimSun",serif';
-const LATIN = '"Inter","Segoe UI",system-ui,sans-serif';
+const LATIN = '"Zen Kaku Gothic New","Segoe UI",system-ui,sans-serif';
 const C = { red: '#b81f2a', green: '#16703a', blue: '#1b4a87', ink: '#15203f', gold: '#b8862b', purple: '#7a2d8c', orange: '#d0661c' };
 
 const IX = 34, IY = 42, IW = 188, IH = 272;

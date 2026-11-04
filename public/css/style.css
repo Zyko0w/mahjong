@@ -12,8 +12,8 @@
   --text: #f6ecd9;
   --muted: #bba78a;
   --radius: 16px;
-  --title: 'Cinzel', 'Times New Roman', serif;
-  --ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --title: 'Shippori Mincho B1', 'Yu Mincho', 'Times New Roman', serif;
+  --ui: 'Zen Kaku Gothic New', 'Segoe UI', system-ui, sans-serif;
   --cjk: 'Noto Serif SC', 'Microsoft YaHei', serif;
 }
 
@@ -282,9 +282,6 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
 .toolbar { position: absolute; }
 
 /* --------------------------------------------------------- hardcore */
-#difficulty-select button b { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-#difficulty-select button[data-diff='hardcore'].active { border-color: #e04a3a; background: linear-gradient(180deg, rgba(224, 74, 58, 0.25), rgba(224, 74, 58, 0.06)); box-shadow: 0 0 20px rgba(224, 74, 58, 0.25); }
-#difficulty-select button[data-diff='hardcore'] svg.lucide { color: #ff7a6a; }
 .menu-card.hc { border-color: rgba(224, 74, 58, 0.55); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 40px rgba(224, 74, 58, 0.18); }
 .hardcore-tag { position: absolute; top: 112px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-family: var(--title); font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: #ffb0a0; background: rgba(120, 16, 16, 0.75); border: 1px solid rgba(255, 120, 100, 0.5); }
 .hardcore-tag svg.lucide { width: 14px; height: 14px; }
@@ -331,56 +328,168 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
   .sound-pop { right: 0; width: 260px; }
 }
 
-/* --------------------------------------------------------- transition de début de partie */
+/* --------------------------------------------------------- transition de début de partie
+   Deux mises en scène :
+   - solo (« le rituel ») : portes shoji en papier qui coulissent, trait d'encre, ensō vermillon, kanji à l'encre ;
+   - duel (« l'affrontement ») : deux moitiés laquées (vermillon / jade) qui s'écrasent en diagonale,
+     choc des lames sur la ligne de rencontre, gerbe d'étincelles, sceau 戰 qui fait trembler l'écran. */
 #transition { position: fixed; inset: 0; z-index: 40; pointer-events: none; overflow: hidden; }
-.tr-panel { position: absolute; top: 0; bottom: 0; width: 52%; transition: transform 0.38s cubic-bezier(.7, 0, .2, 1); display: flex; align-items: center; }
-.tr-panel.left { left: 0; transform: translateX(-102%); justify-content: flex-end; padding-right: 9vw;
-  background: radial-gradient(circle at 80% 50%, #8e1820 0, #3a0709 60%, #120203 100%);
-  border-right: 3px solid var(--gold); box-shadow: 10px 0 40px rgba(0, 0, 0, 0.6); }
-.tr-panel.right { right: 0; transform: translateX(102%); justify-content: flex-start; padding-left: 9vw;
-  background: radial-gradient(circle at 20% 50%, #8e1820 0, #3a0709 60%, #120203 100%);
-  border-left: 3px solid var(--gold); box-shadow: -10px 0 40px rgba(0, 0, 0, 0.6); }
-/* motif de nuages dorés sur la laque */
-.tr-panel::before { content: ''; position: absolute; inset: 0; opacity: 0.12;
-  background-image: radial-gradient(circle at 30px 30px, transparent 14px, var(--gold) 15px, var(--gold) 17px, transparent 18px);
-  background-size: 60px 60px; }
-#transition.closed .tr-panel { transform: translateX(0); }
-.tr-name { position: relative; font-family: var(--title); font-weight: 900; font-size: clamp(26px, 5vw, 60px); color: var(--gold-2); text-shadow: 0 0 30px rgba(224, 179, 90, 0.6), 0 4px 0 #3a1404; opacity: 0; transform: scale(1.4); transition: opacity 0.25s 0.25s, transform 0.4s 0.25s cubic-bezier(.2, .8, .2, 1); max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#transition.closed .tr-name { opacity: 1; transform: scale(1); }
-
-/* coup de katana : trait d'encre rouge en diagonale */
-.tr-slash { position: absolute; left: -20%; top: 50%; width: 140%; height: 14px; transform: rotate(-18deg) scaleX(0); transform-origin: left center;
-  background: linear-gradient(90deg, transparent, #fff 8%, #ffdf9a 40%, #ff3a2a 70%, transparent); filter: drop-shadow(0 0 18px #ff6a3a) drop-shadow(0 0 40px #ff3a2a); border-radius: 50%; }
-#transition.slash .tr-slash { animation: slashIn 0.32s cubic-bezier(.6, 0, .2, 1) forwards; }
-@keyframes slashIn { 0% { transform: rotate(-18deg) scaleX(0); opacity: 1; } 70% { transform: rotate(-18deg) scaleX(1); opacity: 1; } 100% { transform: rotate(-18deg) scaleX(1); opacity: 0; } }
-.tr-flash { position: absolute; inset: 0; background: #fff3d6; opacity: 0; }
-#transition.slash .tr-flash { animation: flash 0.45s ease-out 0.18s; }
-@keyframes flash { 0% { opacity: 0; } 15% { opacity: 0.75; } 100% { opacity: 0; } }
-
-.tr-content { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
-.tr-seal { font-family: var(--cjk); font-weight: 900; font-size: clamp(90px, 16vw, 180px); line-height: 1; color: #fff6e0; width: 1.35em; height: 1.35em; display: grid; place-items: center; border-radius: 18%;
-  background: radial-gradient(circle at 35% 30%, #e03a30, #a3141c 60%, #6e0a10); border: 4px solid var(--gold); box-shadow: 0 0 60px rgba(224, 74, 58, 0.7), inset 0 0 30px rgba(0, 0, 0, 0.4);
-  opacity: 0; transform: scale(2.4) rotate(-14deg); }
-#transition.stamp .tr-seal { animation: stamp 0.42s cubic-bezier(.3, 1.6, .5, 1) forwards; }
-@keyframes stamp { 0% { opacity: 0; transform: scale(2.4) rotate(-14deg); } 60% { opacity: 1; transform: scale(0.92) rotate(3deg); } 100% { opacity: 1; transform: scale(1) rotate(0deg); } }
-.tr-title { font-family: var(--title); font-weight: 900; font-size: clamp(28px, 5vw, 54px); letter-spacing: 0.1em; color: var(--gold-2); text-shadow: 0 0 30px rgba(224, 179, 90, 0.6), 0 4px 0 #3a1404; opacity: 0; transform: translateY(16px); }
-.tr-sub { font-size: 14px; letter-spacing: 0.35em; text-transform: uppercase; color: #f2d9b0; opacity: 0; transform: translateY(10px); }
-#transition.stamp .tr-title { animation: trText 0.4s 0.15s ease-out forwards; }
-#transition.stamp .tr-sub { animation: trText 0.4s 0.3s ease-out forwards; }
-@keyframes trText { to { opacity: 1; transform: none; } }
-#transition.hc .tr-sub { color: #ff9a8a; }
-/* sortie : tout s'efface, les panneaux s'ouvrent */
+.tr-defs { position: absolute; width: 0; height: 0; }
+.tr-panel { position: absolute; top: 0; bottom: 0; display: flex; }
+.tr-name { position: relative; opacity: 0; }
+.tr-flash { position: absolute; inset: 0; opacity: 0; }
+.tr-clash { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.tr-content { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.tr-mark { position: relative; display: grid; place-items: center; }
+.tr-enso { position: absolute; width: 150%; height: 150%; overflow: visible; display: none; }
+.tr-seal { position: relative; font-family: var(--cjk); font-weight: 900; line-height: 1; display: grid; place-items: center; opacity: 0; }
+.tr-title { position: relative; font-family: var(--title); font-weight: 800; opacity: 0; }
+.tr-sub { font-size: 14px; letter-spacing: 0.06em; opacity: 0; }
 #transition.out .tr-content { transition: opacity 0.25s; opacity: 0; }
-#transition.out .tr-panel { transition-duration: 0.5s; }
+@keyframes trText { to { opacity: 1; transform: none; } }
 
-/* variante duel : sceau « 戰 » au centre, noms face à face */
-#transition.duel .tr-seal { font-size: clamp(70px, 12vw, 140px); }
-#transition.duel .tr-title { margin-top: 8px; }
-#transition:not(.duel) .tr-name { display: none; }
-@media (max-width: 760px) { .tr-panel.left { padding-right: 4vw; } .tr-panel.right { padding-left: 4vw; } }
-#transition.duel .tr-panel.left { padding-right: 16vw; }
-#transition.duel .tr-panel.right { padding-left: 16vw; }
-#transition.duel .tr-panel.right { background: radial-gradient(circle at 20% 50%, #17604a 0, #0b2e24 60%, #030c09 100%); }
+/* ================================================================ SOLO : le rituel des shoji */
+#transition:not(.duel) .tr-panel {
+  width: 50.5%;
+  transition: transform 0.42s cubic-bezier(0.65, 0, 0.25, 1);
+  /* treillis de bois (kumiko) sur papier washi éclairé par derrière */
+  background:
+    repeating-linear-gradient(90deg, #4a2e1a 0 5px, transparent 5px 16.66%),
+    repeating-linear-gradient(180deg, #4a2e1a 0 5px, transparent 5px 12.5vh),
+    radial-gradient(ellipse at 50% 45%, #fbf3df, #eadcbc 60%, #d7c398);
+  box-shadow: inset 0 0 0 10px #3b2414, inset 0 0 0 12px #6b4426, 0 0 50px rgba(0, 0, 0, 0.55);
+}
+#transition:not(.duel) .tr-panel::before { /* fibres du papier */
+  content: ''; position: absolute; inset: 0; opacity: 0.5; mix-blend-mode: multiply;
+  background: repeating-linear-gradient(17deg, rgba(150, 115, 70, 0.07) 0 2px, transparent 2px 9px),
+              repeating-linear-gradient(-23deg, rgba(150, 115, 70, 0.05) 0 1px, transparent 1px 13px);
+}
+#transition:not(.duel) .tr-panel.left { left: 0; transform: translateX(-101%); }
+#transition:not(.duel) .tr-panel.right { right: 0; transform: translateX(101%); }
+/* poignée creuse (hikite) au bord de chaque porte */
+#transition:not(.duel) .tr-panel::after {
+  content: ''; position: absolute; top: calc(50% - 34px); width: 14px; height: 68px; border-radius: 7px;
+  background: linear-gradient(90deg, #2a170c, #5a3820); box-shadow: inset 0 0 0 2px #8e6420;
+}
+#transition:not(.duel) .tr-panel.left::after { right: 30px; }
+#transition:not(.duel) .tr-panel.right::after { left: 30px; }
+#transition:not(.duel).closed .tr-panel { transform: translateX(0); }
+#transition:not(.duel).out .tr-panel { transition-duration: 0.6s; }
+#transition:not(.duel) .tr-name, #transition:not(.duel) .tr-slash, #transition:not(.duel) .tr-flash, #transition:not(.duel) .tr-clash { display: none; }
+
+/* kanji écrit à l'encre, entouré d'un ensō vermillon tracé au pinceau */
+#transition:not(.duel) .tr-enso { display: block; }
+#transition:not(.duel) .tr-enso path { fill: none; stroke: #c8372d; stroke-width: 7; stroke-linecap: round; filter: url(#tr-ink); stroke-dasharray: 100; stroke-dashoffset: 100; }
+#transition:not(.duel).stamp .tr-enso path { animation: trEnso 0.75s cubic-bezier(0.5, 0, 0.3, 1) forwards; }
+@keyframes trEnso { to { stroke-dashoffset: 0; } }
+#transition:not(.duel) .tr-seal { font-size: clamp(84px, 14vw, 160px); width: 1.3em; height: 1.3em; color: #1a120c; filter: url(#tr-ink); }
+#transition:not(.duel).stamp .tr-seal { animation: inkBleed 0.55s ease-out 0.12s forwards; }
+@keyframes inkBleed { 0% { opacity: 0; transform: scale(1.12); filter: blur(10px); } 60% { opacity: 1; } 100% { opacity: 1; transform: none; filter: url(#tr-ink); } }
+/* le titre s'écrit sur un trait d'encre peint d'un seul geste (au moment du son de lame) */
+#transition:not(.duel) .tr-title {
+  isolation: isolate; font-size: clamp(26px, 4.4vw, 48px); color: transparent; padding: 10px 46px 12px; letter-spacing: 0.04em; transition: color 0.35s 0.1s;
+}
+#transition:not(.duel) .tr-title::before {
+  content: ''; position: absolute; inset: 0 -12px; z-index: -1; background: #17110d; filter: url(#tr-ink);
+  border-radius: 46% 54% 40% 60% / 62% 44% 56% 38%; transform: scaleX(0); transform-origin: left center;
+}
+#transition:not(.duel).slash .tr-title { opacity: 1; }
+#transition:not(.duel).slash .tr-title::before { animation: brush 0.38s cubic-bezier(0.6, 0, 0.2, 1) forwards; }
+@keyframes brush { to { transform: scaleX(1); } }
+#transition:not(.duel).stamp .tr-title { color: #f6ecd9; }
+#transition:not(.duel) .tr-sub { color: #6b4426; font-weight: 700; transform: translateY(8px); }
+#transition:not(.duel).stamp .tr-sub { animation: trText 0.4s 0.35s ease-out forwards; }
+#transition:not(.duel).hc .tr-sub { color: #a3201d; }
+#transition:not(.duel).hc .tr-title::before { background: #5e1412; }
+
+/* ================================================================ DUEL : l'affrontement en diagonale */
+#transition.duel .tr-panel {
+  left: 0; width: 100%;
+  transition: transform 0.34s cubic-bezier(0.8, 0, 0.2, 1);
+}
+#transition.duel .tr-panel.left {
+  clip-path: polygon(0 0, 62% 0, 38% 100%, 0 100%); transform: translate(-70%, -45%);
+  align-items: flex-start; justify-content: flex-start; padding: 15vh 0 0 7vw;
+  background: radial-gradient(circle at 30% 35%, #b8261f 0, #6e1210 45%, #1c0404 100%);
+}
+#transition.duel .tr-panel.right {
+  clip-path: polygon(62% 0, 100% 0, 100% 100%, 38% 100%); transform: translate(70%, 45%);
+  align-items: flex-end; justify-content: flex-end; padding: 0 7vw 15vh 0;
+  background: radial-gradient(circle at 70% 65%, #1f8a63 0, #0f4a36 45%, #021009 100%);
+}
+#transition.duel .tr-panel::before { /* vagues seigaiha dorées sur la laque */
+  content: ''; position: absolute; inset: 0; opacity: 0.13;
+  background:
+    radial-gradient(circle at 50% 100%, transparent 9px, #e0b35a 10px 11px, transparent 12px 17px, #e0b35a 18px 19px, transparent 20px) 0 0 / 40px 20px,
+    radial-gradient(circle at 50% 100%, transparent 9px, #e0b35a 10px 11px, transparent 12px 17px, #e0b35a 18px 19px, transparent 20px) 20px 10px / 40px 20px;
+}
+#transition.duel.closed .tr-panel { transform: none; }
+#transition.duel.out .tr-panel { transition: transform 0.5s cubic-bezier(0.6, 0, 0.4, 1); }
+#transition.duel.out .tr-panel.left { transform: translate(-70%, -45%); }
+#transition.duel.out .tr-panel.right { transform: translate(70%, 45%); }
+#transition.duel .tr-name {
+  font-family: var(--title); font-weight: 800; font-size: clamp(30px, 5.6vw, 72px); line-height: 1; color: #fff3e0;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.45), 0 0 34px rgba(0, 0, 0, 0.5);
+  max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transform: skewX(-8deg) translateX(-40px);
+  transition: opacity 0.2s 0.3s, transform 0.45s 0.3s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+#transition.duel .tr-panel.right .tr-name { transform: skewX(-8deg) translateX(40px); text-align: right; }
+#transition.duel .tr-name::before { display: block; font-family: var(--ui); font-size: 0.24em; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 0.25em; opacity: 0.8; }
+#transition.duel .tr-panel.left .tr-name::before { content: 'Toi'; color: #ffb3a0; }
+#transition.duel .tr-panel.right .tr-name::before { content: 'Adversaire'; color: #9ff0c8; }
+#transition.duel.closed .tr-name { opacity: 1; transform: skewX(-8deg); }
+
+/* la ligne de rencontre : les deux lames se croisent, la lumière gagne toute la diagonale */
+#transition.duel .tr-slash { position: absolute; inset: 0; filter: drop-shadow(0 0 10px #fff) drop-shadow(0 0 28px #ffb04a); }
+#transition.duel .tr-slash::before {
+  content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #fff, #ffe3a0 50%, #fff);
+  clip-path: polygon(61.7% 0, 62.3% 0, 62.3% 0, 61.7% 0);
+}
+#transition.duel.slash .tr-slash::before { animation: seam 0.26s cubic-bezier(0.7, 0, 0.3, 1) forwards; }
+@keyframes seam { to { clip-path: polygon(61.5% 0, 62.5% 0, 38.5% 100%, 37.5% 100%); } }
+#transition.duel.out .tr-slash { transition: opacity 0.2s; opacity: 0; }
+/* gerbe d'étincelles au point de choc */
+#transition.duel .tr-clash::before {
+  content: ''; position: absolute; left: -45vmin; top: -45vmin; width: 90vmin; height: 90vmin; border-radius: 50%;
+  background: repeating-conic-gradient(from 7deg, rgba(255, 230, 170, 0.95) 0 1.6deg, transparent 1.6deg 13deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 14%, #000 22%, transparent 68%);
+  mask-image: radial-gradient(circle, transparent 14%, #000 22%, transparent 68%);
+  opacity: 0; transform: scale(0.2) rotate(0deg);
+}
+#transition.duel.slash .tr-clash::before { animation: sparks 0.6s cubic-bezier(0.1, 0.8, 0.3, 1) 0.2s forwards; }
+@keyframes sparks { 0% { opacity: 1; transform: scale(0.2) rotate(0deg); } 100% { opacity: 0; transform: scale(1.25) rotate(18deg); } }
+#transition.duel .tr-flash { background: #fff3d6; }
+#transition.duel.slash .tr-flash { animation: flash 0.4s ease-out 0.18s; }
+@keyframes flash { 0% { opacity: 0; } 15% { opacity: 0.8; } 100% { opacity: 0; } }
+
+/* le sceau 戰 tombe sur la ligne et fait trembler l'écran */
+#transition.duel .tr-seal {
+  font-size: clamp(64px, 11vw, 128px); width: 1.4em; height: 1.4em; border-radius: 8%; color: #fff6e0;
+  background: radial-gradient(circle at 35% 30%, #2a1a12, #0c0705 75%); border: 3px solid #e0b35a;
+  box-shadow: 0 0 0 6px rgba(12, 7, 5, 0.85), 0 0 0 8px #c8372d, 0 0 70px rgba(255, 140, 60, 0.55);
+  text-shadow: 0 0 22px rgba(255, 90, 60, 0.9); transform: scale(3) rotate(-20deg);
+}
+#transition.duel.stamp .tr-seal { animation: slam 0.38s cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+@keyframes slam { 0% { opacity: 0; transform: scale(3) rotate(-20deg); } 80% { opacity: 1; transform: scale(0.94) rotate(2deg); } 100% { opacity: 1; transform: none; } }
+#transition.duel.stamp .tr-content { animation: quake 0.42s linear 0.3s; }
+@keyframes quake { 0%, 100% { transform: none; } 15% { transform: translate(-9px, 5px); } 30% { transform: translate(8px, -6px); } 45% { transform: translate(-6px, -3px); } 60% { transform: translate(5px, 4px); } 75% { transform: translate(-3px, 2px); } }
+#transition.duel .tr-title {
+  font-size: clamp(30px, 5vw, 56px); letter-spacing: 0.08em; color: #fff3e0; margin-top: 10px;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.6), 0 0 30px rgba(255, 120, 60, 0.6); transform: scale(1.3);
+}
+#transition.duel.stamp .tr-title { animation: trText 0.3s 0.32s cubic-bezier(0.2, 1.4, 0.4, 1) forwards; }
+#transition.duel .tr-sub { color: #f2d9b0; font-weight: 700; padding: 5px 14px; border-radius: 3px; background: rgba(8, 4, 3, 0.75); transform: translateY(8px); }
+#transition.duel.stamp .tr-sub { animation: trText 0.35s 0.45s ease-out forwards; }
+#transition.duel.hc .tr-sub { color: #ff9a8a; }
+
+@media (max-width: 760px) {
+  #transition.duel .tr-panel.left { padding: 12vh 0 0 5vw; }
+  #transition.duel .tr-panel.right { padding: 0 5vw 12vh 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #transition.duel.stamp .tr-content { animation: none; }
+  #transition.duel.slash .tr-clash::before { animation: none; }
+}
 
 /* --------------------------------------------------------- copie du code de salon */
 .room-code b { cursor: pointer; }
@@ -431,10 +540,6 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
 #loader.ready { background: radial-gradient(circle at 50% 40%, rgba(42, 10, 12, 0.55), rgba(5, 2, 3, 0.88) 70%); backdrop-filter: blur(3px); }
 
 /* --------------------------------------------------------- mode samouraï */
-#difficulty-select { grid-template-columns: repeat(3, 1fr); }
-#difficulty-select button small { font-size: 10px; }
-#difficulty-select button[data-diff='samurai'].active { border-color: #f2f2f2; background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.35)); box-shadow: 0 0 22px rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(224, 74, 58, 0.5); }
-#difficulty-select button[data-diff='samurai'] svg.lucide { color: #ffffff; }
 .menu-card.sm { border-color: rgba(255, 255, 255, 0.5); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), 0 0 40px rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(224, 74, 58, 0.35); }
 .hardcore-tag.samurai { color: #ffffff; background: linear-gradient(90deg, rgba(10, 10, 10, 0.85), rgba(110, 10, 14, 0.85)); border-color: rgba(255, 255, 255, 0.55); }
 
@@ -445,18 +550,9 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
 @media (max-width: 760px) { .pip { bottom: 64px; width: 42vw; } }
 
 /* ---------------------------------------------------------------- modes : contre la montre, aveugle, zen, défi du jour */
-#variant-select button b { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; }
-#variant-select button small { font-size: 10px; }
-#variant-select button[data-variant='zen'].active { border-color: #9fd8b8; background: linear-gradient(180deg, rgba(120, 220, 170, 0.18), rgba(120, 220, 170, 0.04)); box-shadow: 0 0 20px rgba(120, 220, 170, 0.18); }
-#variant-select button[data-variant='blind'].active { border-color: #8a7ad8; background: linear-gradient(180deg, rgba(138, 122, 216, 0.22), rgba(138, 122, 216, 0.05)); box-shadow: 0 0 20px rgba(138, 122, 216, 0.2); }
-#variant-select button[data-variant='timeattack'].active { border-color: #f0a020; background: linear-gradient(180deg, rgba(240, 160, 32, 0.22), rgba(240, 160, 32, 0.05)); box-shadow: 0 0 20px rgba(240, 160, 32, 0.2); }
-.segmented.muted { opacity: 0.4; pointer-events: none; filter: grayscale(0.6); }
-.btn.daily { background: linear-gradient(180deg, rgba(240, 199, 106, 0.22), rgba(176, 122, 42, 0.12)); border-color: rgba(240, 199, 106, 0.55); color: var(--gold-2, #f0c76a); }
-.btn.daily .daily-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
-.btn.daily small { font-family: Inter, sans-serif; font-size: 11px; letter-spacing: 0.02em; color: var(--muted); font-weight: 600; }
 .hardcore-tag.mode { color: #f6dfa6; background: rgba(60, 40, 10, 0.75); border-color: rgba(224, 179, 90, 0.5); }
 #h-time.low { color: #ff6a5a; animation: lowTime 1s ease-in-out infinite; }
 @keyframes lowTime { 50% { transform: scale(1.12); text-shadow: 0 0 18px rgba(255, 90, 70, 0.8); } }
 .board-head { flex-wrap: wrap; gap: 8px; }
-.board-select { background: rgba(0, 0, 0, 0.35); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font: 600 13px Inter, sans-serif; }
+.board-select { background: rgba(0, 0, 0, 0.35); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font: 600 13px var(--ui); }
 .board-select option { background: #1a1410; }

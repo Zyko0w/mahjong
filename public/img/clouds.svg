@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="96" viewBox="0 0 160 96">
+  <!-- Nuages de bon augure (xiangyun) : volutes dorées très discrètes, en motif répété -->
+  <g fill="none" stroke="#e8b64c" stroke-width="1.3" stroke-linecap="round" stroke-opacity="0.11">
+    <path d="M14 40 c0 -10 14 -12 18 -4 c3 -8 18 -8 19 2 c8 -2 13 7 6 11 H18 c-6 0 -8 -6 -4 -9 z" />
+    <path d="M26 38 c2 -4 7 -4 8 0 M42 37 c2 -4 7 -3 7 1" />
+    <path d="M96 84 c0 -10 14 -12 18 -4 c3 -8 18 -8 19 2 c8 -2 13 7 6 11 H100 c-6 0 -8 -6 -4 -9 z" />
+    <path d="M108 82 c2 -4 7 -4 8 0 M124 81 c2 -4 7 -3 7 1" />
+  </g>
+</svg>

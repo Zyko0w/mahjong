@@ -265,7 +265,7 @@ export class OpponentView {
       ctx.strokeStyle = '#d6a54a';
       ctx.stroke();
       ctx.fillStyle = '#f6d58c';
-      ctx.font = '900 52px Cinzel, serif';
+      ctx.font = '900 52px "Shippori Mincho B1", serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(name.slice(0, 16), w / 2, 58);
@@ -276,7 +276,7 @@ export class OpponentView {
       roundRect(ctx, 50, 104, Math.max(22, (w - 100) * k), 22, 11);
       ctx.fillStyle = '#43c28f';
       ctx.fill();
-      ctx.font = '700 22px Inter, sans-serif';
+      ctx.font = '700 22px "Zen Kaku Gothic New", sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.fillText(`${left} tuiles`, w / 2, 116);
     }, 512, 150, 4.4);
@@ -296,7 +296,7 @@ export class OpponentView {
       ctx.lineTo(w / 2 + 22, h - 42);
       ctx.fill();
       ctx.fillStyle = '#7a1418';
-      ctx.font = '900 54px Cinzel, serif';
+      ctx.font = '900 54px "Shippori Mincho B1", serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(text, w / 2, (h - 40) / 2 + 6);

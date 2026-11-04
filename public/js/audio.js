@@ -16,9 +16,13 @@ function hold(param, t) {
 
 const readVol = (key, def) => { const v = parseFloat(localStorage.getItem(key)); return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : def; };
 
+const SAMPLE_NAMES = ['kiai-court', 'kiai-long', 'katana-slash', 'katana-degaine', 'gong', 'gong-grand'];
+
 export class Sound {
   constructor() {
     this.ctx = null;
+    this.unlocked = false; // vrai après le premier geste de l'utilisateur (règle des navigateurs)
+    this.samplesReady = Promise.resolve();
     this.muted = localStorage.getItem('mj_muted') === '1';
     this.musicOn = localStorage.getItem('mj_music') !== '0';
     this.musicVol = readVol('mj_music_vol', 0.55);
@@ -34,6 +38,11 @@ export class Sound {
     // On télécharge le premier morceau du menu dès l'ouverture de la page :
     // au premier clic, la musique démarre instantanément.
     this.playlistReady.then(() => this.preloadTrack('menu'));
+    // Bruitages téléchargés tout de suite (sans attendre le premier clic) : le gong de la porte
+    // d'entrée sonne dès qu'on le frappe ; il ne reste qu'à les décoder une fois l'audio autorisé.
+    this.sampleBytes = Object.fromEntries(
+      SAMPLE_NAMES.map((n) => [n, fetch('/sfx/' + n + '.mp3').then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null)])
+    );
   }
 
   songs(name) {
@@ -54,7 +63,7 @@ export class Sound {
   }
 
   preloadTrack(name) {
-    if (!this.songs(name).length || this.ctx) return;
+    if (!this.songs(name).length || this.unlocked) return;
     this.ensureAudioEl();
     this.makeQueue(name);
     this.audioEl.src = '/music/' + encodeURIComponent(this.queue[0].file);
@@ -62,11 +71,22 @@ export class Sound {
     this.preloaded = name;
   }
 
+  // Premier geste de l'utilisateur : on relance le contexte audio (préparé pendant le chargement)
+  // et la musique démarre. Rien de lourd ici, pour que le clic sur le gong ne fige pas l'image.
   init() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume();
-      return;
-    }
+    if (!this.ctx) this.prepare();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.unlocked) return;
+    this.unlocked = true;
+    if (this.musicOn) this.startMusic();
+  }
+
+  // Construction du graphe audio (réverbération générée, instruments, décodage des bruitages).
+  // Appelée pendant l'écran de chargement : le contexte est créé « en pause », c'est permis
+  // sans geste de l'utilisateur ; il n'est relancé qu'au premier clic.
+  prepare() {
+    if (this.ctx) return;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     const ctx = (this.ctx = new AC());
@@ -105,7 +125,6 @@ export class Sound {
     this.noise = ctx.createBuffer(1, len2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len2; i++) d[i] = Math.random() * 2 - 1;
-    if (this.musicOn) this.startMusic();
     this.loadSamples();
   }
 
@@ -118,7 +137,7 @@ export class Sound {
   setMusic(on) {
     this.musicOn = on;
     localStorage.setItem('mj_music', on ? '1' : '0');
-    if (on) this.startMusic();
+    if (on) { if (this.unlocked) this.startMusic(); }
     else this.stopMusic();
   }
 
@@ -142,7 +161,7 @@ export class Sound {
   setTrack(name) {
     if (!MODES.includes(name) || name === this.trackName) return;
     this.trackName = name;
-    if (!this.ctx || !this.musicOn) return;
+    if (!this.unlocked || !this.musicOn) return;
     this.fadeMusic(0, 0.6);
     clearTimeout(this.switchTimer);
     this.switchTimer = setTimeout(() => this.startMusic(), 700);
@@ -169,6 +188,7 @@ export class Sound {
 
   // Lit les morceaux de l'ambiance courante à la suite, dans un ordre aléatoire
   async startMusic() {
+    if (!this.unlocked) return;
     if (!this.ctx) return;
     await this.playlistReady;
     if (!this.songs(this.trackName).length) return;
@@ -270,12 +290,11 @@ export class Sound {
   // ------------------------------------------------------------ bruitages enregistrés (public/sfx, CC0)
   loadSamples() {
     this.samples = {};
-    const names = ['kiai-court', 'kiai-long', 'katana-slash', 'katana-degaine', 'gong', 'gong-grand'];
     this.samplesReady = Promise.all(
-      names.map(async (n) => {
+      SAMPLE_NAMES.map(async (n) => {
         try {
-          const buf = await (await fetch('/sfx/' + n + '.mp3')).arrayBuffer();
-          this.samples[n] = await this.ctx.decodeAudioData(buf);
+          const buf = await this.sampleBytes[n];
+          if (buf) this.samples[n] = await this.ctx.decodeAudioData(buf.slice(0));
         } catch { /* son manquant : on l'ignore */ }
       })
     );

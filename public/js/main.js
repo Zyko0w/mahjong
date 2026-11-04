@@ -4,7 +4,7 @@ import { OpponentView, computeDuelLayout } from './opponent.js';
 import { MahjongGame, LAYOUTS, FACE_NAMES } from './game.js';
 import { Sound } from './audio.js';
 import { DuelClient } from './net.js';
-import { loadFaceFonts } from './textures.js';
+import { loadFaceFonts, drawFace } from './textures.js';
 import { Run, COMBO_WINDOW, dailyChallenge, parisDate, shiftDate } from './rules.js';
 
 const $ = (s) => document.querySelector(s);
@@ -540,12 +540,15 @@ function modeLabel(prefix) {
 }
 
 function endButtons(withBoard = true) {
-  const out = [
-    S.daily
-      ? ['Réessayer', 'primary', () => newGame(S.layout, S.seed, 'solo', 'normal', S.variant, S.daily), null, 'rotate-ccw']
-      : ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff, S.variant), null, 'rotate-ccw'],
-  ];
-  if (withBoard && S.variant !== 'zen') out.push(['Classement', 'ghost', () => (S.daily ? showBoard('daily') : showBoard(S.layout, S.diff, S.variant)), null, 'trophy']);
+  if (S.daily) {
+    // une seule partie par jour : on montre le classement du jour à la place de « Rejouer »
+    return [
+      ['Classement du jour', 'primary', () => showBoard('daily'), null, 'trophy'],
+      ['Menu', 'ghost', showMenu, null, 'house'],
+    ];
+  }
+  const out = [['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff, S.variant), null, 'rotate-ccw']];
+  if (withBoard && S.variant !== 'zen') out.push(['Classement', 'ghost', () => showBoard(S.layout, S.diff, S.variant), null, 'trophy']);
   out.push(['Menu', 'ghost', showMenu, null, 'house']);
   return out;
 }
@@ -602,6 +605,11 @@ function doUndo() {
   sendProgress();
 }
 
+function confirmQuitSolo() {
+  if (S.ended) return true;
+  return confirm(S.daily ? 'Quitter le défi du jour ? Il ne se joue qu’une fois : tu ne pourras pas le recommencer aujourd’hui.' : 'Quitter la partie en cours ?');
+}
+
 function togglePause(force) {
   if (!S.game || S.ended || S.mode === 'duel') return;
   const p = force !== undefined ? force : !S.paused;
@@ -609,6 +617,7 @@ function togglePause(force) {
   S.paused = p;
   if (p) {
     scene.setBoardVisible(false);
+    $('#p-restart').classList.toggle('hidden', !!S.daily);
     openModal('#m-pause');
   } else {
     S.lastTick = performance.now();
@@ -744,17 +753,56 @@ function markDailyPlayed(date) {
   if (streak > 1) toast(`Série de défis : ${streak} jours d'affilée !`, false, 'flame');
 }
 
-function refreshDailyButton() {
-  const ch = dailyChallenge(parisDate());
-  const done = localStorage.getItem('mj_daily_last') === ch.date;
-  const streak = dailyStreak();
-  $('#daily-info').textContent = `${LAYOUTS[ch.layout].name} · ${variantOf(ch.variant).name}${streak ? ` · série de ${streak} j` : ''}${done ? ' · joué' : ''}`;
+function dailyDone() { return localStorage.getItem('mj_daily_last') === parisDate(); }
+
+// Temps avant le prochain défi (minuit, heure de Paris)
+function untilNextDaily() {
+  const now = new Date();
+  const paris = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+  const next = new Date(paris);
+  next.setHours(24, 0, 0, 0);
+  const min = Math.max(1, Math.round((next - paris) / 60000));
+  return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}` : `${min} min`;
 }
 
-function startDaily() {
+function refreshDailyButton() {
+  const ch = dailyChallenge(parisDate());
+  const done = dailyDone();
+  const streak = dailyStreak();
+  const btn = $('#btn-daily');
+  btn.classList.toggle('done', done);
+  btn.querySelector('.label').firstChild.textContent = done ? 'Défi du jour joué' : 'Défi du jour';
+  $('#daily-info').textContent = done
+    ? `Voir le classement · prochain dans ${untilNextDaily()}${streak > 1 ? ` · série de ${streak} j` : ''}`
+    : `${LAYOUTS[ch.layout].name} · ${variantOf(ch.variant).name} · une seule partie${streak ? ` · série de ${streak} j` : ''}`;
+}
+
+// Le défi ne se joue qu'une fois par jour : le serveur enregistre le lancement avant la partie
+async function startDaily() {
   sound.init();
+  if (dailyDone()) return showBoard('daily');
   if (!validPseudo()) return;
   const ch = dailyChallenge(parisDate());
+  const btn = $('#btn-daily');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/daily-start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pseudo: S.pseudo, date: ch.date }) });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      markDailyPlayed(ch.date);
+      refreshDailyButton();
+      $('#menu-error').textContent = data.error;
+      return;
+    }
+    if (!r.ok) throw new Error(data.error || 'serveur injoignable (' + r.status + ')');
+  } catch (e) {
+    $('#menu-error').textContent = 'Défi du jour indisponible : ' + (e.message && !/fetch/i.test(e.message) ? e.message : 'serveur injoignable') + '.';
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+  markDailyPlayed(ch.date);
+  refreshDailyButton();
   newGame(ch.layout, ch.seed, 'solo', 'normal', ch.variant, ch.date);
 }
 
@@ -881,7 +929,7 @@ function countUp() {
 // ================================================================ classement
 // Catégories : vue d'ensemble, une par forme (Normal / Hardcore / Samouraï), et les duels.
 let boardCache = null;
-const BOARD = { cat: 'overview', diff: 'normal', variant: 'classic', duelLayout: 'all' };
+const BOARD = { cat: 'overview', diff: 'normal', variant: 'classic', duelLayout: 'all', day: 'today' };
 const BOARD_VARIANTS = ['classic', 'timeattack', 'blind'];
 
 function catKey(layout, diff, variant = BOARD.variant) { return layout + variantOf(variant).suffix + diffOf(diff).suffix; }
@@ -889,10 +937,12 @@ function catKey(layout, diff, variant = BOARD.variant) { return layout + variant
 function duelList(layout = BOARD.duelLayout) {
   return boardCache && boardCache.duel && !Array.isArray(boardCache.duel) ? boardCache.duel[layout + diffOf(BOARD.diff).suffix] || [] : [];
 }
-function dailyList() { return boardCache && boardCache.daily ? boardCache.daily[boardCache.today] || [] : []; }
+function boardDay() { return boardCache ? (BOARD.day === 'yesterday' ? shiftDate(boardCache.today, -1) : boardCache.today) : parisDate(); }
+function dailyList(day = boardDay()) { return boardCache && boardCache.daily ? boardCache.daily[day] || [] : []; }
 
 async function showBoard(cat = 'overview', diff = BOARD.diff, variant = BOARD.variant) {
   BOARD.cat = cat;
+  if (cat === 'daily') BOARD.day = 'today';
   BOARD.diff = DIFFS[diff] ? diff : 'normal';
   BOARD.variant = BOARD_VARIANTS.includes(variant) ? variant : 'classic';
   openModal('#m-board');
@@ -915,23 +965,10 @@ function buildBoardCats() {
   const nav = $('#board-cats');
   nav.innerHTML = '';
   const add = (key, label, ico, count, group) => {
-    if (group) {
-      const g = document.createElement('div');
-      g.className = 'cat-group';
-      g.textContent = group;
-      nav.appendChild(g);
-    }
-    const btn = document.createElement('button');
-    btn.className = 'cat' + (BOARD.cat === key ? ' active' : '');
-    btn.append(icon(ico));
-    const name = document.createElement('span');
-    name.textContent = label;
-    btn.appendChild(name);
-    if (count !== null) {
-      const c = document.createElement('em');
-      c.textContent = count;
-      btn.appendChild(c);
-    }
+    if (group) nav.appendChild(h('span', 'cat-group', group));
+    const btn = h('button', 'cat' + (BOARD.cat === key ? ' active' : ''));
+    btn.append(icon(ico), h('span', null, label));
+    if (count) btn.appendChild(h('em', null, count));
     btn.onclick = () => { BOARD.cat = key; buildBoardCats(); renderBoard(); };
     nav.appendChild(btn);
   };
@@ -940,13 +977,59 @@ function buildBoardCats() {
   let first = true;
   for (const [key, L] of Object.entries(LAYOUTS)) {
     const n = boardCache ? (boardCache[catKey(key, BOARD.diff)] || []).length : null;
-    add(key, L.name, L.icon || 'grid-3x3', n, first ? 'Formes' : null);
+    add(key, L.name.replace(/^(Le |La |L’)/, ''), L.icon || 'grid-3x3', n, first ? 'Plateaux' : null);
     first = false;
   }
-  add('duel', 'Duels', 'swords', boardCache ? duelList().length : null, 'Multijoueur');
+  add('duel', 'Duels', 'swords', boardCache ? duelList().length : null, 'Duel');
   $$('#board-diff button').forEach((x) => x.classList.toggle('active', x.dataset.diff === BOARD.diff));
   $$('#board-variant button').forEach((x) => x.classList.toggle('active', x.dataset.variant === BOARD.variant));
   refreshIcons();
+  const active = nav.querySelector('.cat.active');
+  if (active) nav.scrollTo({ left: active.offsetLeft - nav.clientWidth / 2 + active.offsetWidth / 2, behavior: 'smooth' });
+}
+
+// Petits utilitaires du classement
+function h(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+// Les trois dragons du mahjong servent de médailles : 中 rouge, 發 vert, 白 blanc (même dessin que les tuiles 3D)
+const PODIUM_FACES = ['zr', 'zg', 'zw'];
+const faceURLs = new Map();
+function tileImg(face, cls = '') {
+  if (!faceURLs.has(face)) faceURLs.set(face, drawFace(face).toDataURL());
+  const img = new Image();
+  img.src = faceURLs.get(face);
+  img.alt = '';
+  img.draggable = false;
+  if (cls) img.className = cls;
+  return img;
+}
+function boardEmpty(text) {
+  const d = h('div', 'board-empty');
+  d.append(tileImg('zw', 'be-tile'), h('p', null, text));
+  return d;
+}
+// Indicateur glissant des sélecteurs (mode, difficulté, jour)
+function syncSeg(box) {
+  const a = box && box.querySelector('button.active');
+  if (!a || box.classList.contains('hidden')) return;
+  box.style.setProperty('--x', a.offsetLeft + 'px');
+  box.style.setProperty('--w', a.offsetWidth + 'px');
+}
+// Les nombres du podium défilent jusqu'à leur valeur
+function countUpIn(root, delay = 650) {
+  const els = [...root.querySelectorAll('[data-count]')];
+  const start = performance.now() + delay;
+  const step = (now) => {
+    const k = Math.min(1, Math.max(0, (now - start) / 900));
+    const e = 1 - (1 - k) ** 3;
+    for (const n of els) n.textContent = Math.round(+n.dataset.count * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function renderBoard() {
@@ -954,30 +1037,31 @@ function renderBoard() {
   const title = $('#board-title');
   title.innerHTML = '';
   const L = LAYOUTS[cat];
-  const meta = cat === 'overview' ? ['Vue d’ensemble', 'layout-grid'] : cat === 'duel' ? ['Duels · ' + (LAYOUTS[BOARD.duelLayout] ? LAYOUTS[BOARD.duelLayout].name : 'tous les plateaux') + ' · ' + diffOf(BOARD.diff).name, 'swords'] : cat === 'daily' ? ['Défi du jour', 'calendar-days'] : [L.name, L.icon];
-  title.append(icon(meta[1]), ' ' + meta[0]);
-  const smText = L ? L.desc : cat === 'daily' ? (() => { const ch = dailyChallenge(parisDate()); return `${LAYOUTS[ch.layout].name} · ${variantOf(ch.variant).name}`; })() : '';
-  if (smText) {
-    const sm = document.createElement('small');
-    sm.textContent = ' · ' + smText;
-    title.appendChild(sm);
-  }
+  const meta = cat === 'overview' ? ['Vue d’ensemble', 'layout-grid'] : cat === 'duel' ? ['Duels', 'swords'] : cat === 'daily' ? ['Défi du jour', 'calendar-days'] : [L.name, L.icon];
+  title.append(icon(meta[1]), h('span', null, meta[0]));
+  const smText = L
+    ? L.desc
+    : cat === 'daily'
+      ? (() => { const ch = dailyChallenge(boardDay()); return `${LAYOUTS[ch.layout].name}, ${variantOf(ch.variant).name.toLowerCase()} · ${new Date(ch.date + 'T12:00:00Z').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}`; })()
+      : cat === 'duel'
+        ? `${LAYOUTS[BOARD.duelLayout] ? LAYOUTS[BOARD.duelLayout].name : 'Tous les plateaux'} · ${diffOf(BOARD.diff).name}`
+        : 'Le champion de chaque plateau';
+  title.appendChild(h('small', null, smText));
   $('#board-diff').classList.toggle('hidden', cat === 'daily');
   $('#board-duel-layout').classList.toggle('hidden', cat !== 'duel');
   $('#board-duel-layout').value = BOARD.duelLayout;
   $('#board-variant').classList.toggle('hidden', cat === 'duel' || cat === 'daily');
+  $('#board-day').classList.toggle('hidden', cat !== 'daily');
+  $$('#board-day button').forEach((x) => x.classList.toggle('active', x.dataset.day === BOARD.day));
   const overview = cat === 'overview';
   $('#board-overview').classList.toggle('hidden', !overview);
   $('#board-wrap').classList.toggle('hidden', overview);
+  requestAnimationFrame(() => ['#board-variant', '#board-diff', '#board-day'].forEach((s) => syncSeg($(s))));
   if (!boardCache) {
     $('#board-wrap').classList.remove('hidden');
-    $('#board-table').innerHTML = '';
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.className = 'empty';
-    td.textContent = BOARD.error || 'Serveur injoignable.';
-    tr.appendChild(td);
-    $('#board-table').appendChild(tr);
+    $('#board-overview').classList.add('hidden');
+    $('#board-podium').classList.add('hidden');
+    $('#board-table').replaceChildren(boardEmpty(BOARD.error || 'Serveur injoignable.'));
     refreshIcons();
     return;
   }
@@ -986,84 +1070,95 @@ function renderBoard() {
   refreshIcons();
 }
 
-// Une carte par catégorie avec le champion et le podium
+// Vue d'ensemble : une plaque par catégorie, avec son plateau et son podium
 function renderOverview() {
   const box = $('#board-overview');
   box.innerHTML = '';
   const cats = [['daily', 'Défi du jour', 'calendar-days'], ...Object.entries(LAYOUTS).map(([k, L]) => [k, L.name, L.icon]), ['duel', 'Duels', 'swords']];
-  for (const [key, name, ico] of cats) {
+  cats.forEach(([key, name, ico], n) => {
     const list = key === 'duel' ? duelList('all') : key === 'daily' ? dailyList() : boardCache[catKey(key, BOARD.diff)] || [];
-    const card = document.createElement('button');
-    card.className = 'ov-card';
+    const card = h('button', 'ov-card' + (key === 'daily' ? ' daily' : ''));
+    card.style.setProperty('--i', n);
     card.onclick = () => { BOARD.cat = key; if (key === 'duel') BOARD.duelLayout = 'all'; buildBoardCats(); renderBoard(); };
-    const head = document.createElement('div');
-    head.className = 'ov-head';
-    head.append(icon(ico), ' ' + name);
+    const head = h('div', 'ov-head');
+    head.append(icon(ico), h('span', null, name));
     card.appendChild(head);
+    const art = h('div', 'ov-art');
     if (key !== 'duel') {
       const cv = document.createElement('canvas');
-      cv.width = 120;
-      cv.height = 60;
+      cv.width = 160;
+      cv.height = 72;
       drawLayoutPreview(cv, LAYOUTS[key === 'daily' ? dailyChallenge(parisDate()).layout : key].positions);
-      card.appendChild(cv);
-    }
-    const podium = document.createElement('ol');
-    if (!list.length) {
-      const li = document.createElement('li');
-      li.className = 'none';
-      li.textContent = 'Personne pour l’instant';
-      podium.appendChild(li);
-    }
+      art.appendChild(cv);
+    } else art.append(icon('swords'));
+    card.appendChild(art);
+    const podium = h('ol');
+    if (!list.length) podium.appendChild(h('li', 'none', 'Aucun nom gravé'));
     list.slice(0, 3).forEach((e, i) => {
-      const li = document.createElement('li');
-      li.className = 'p' + (i + 1);
-      const who = document.createElement('span');
-      who.textContent = e.pseudo;
-      const val = document.createElement('b');
-      val.textContent = key === 'duel' ? `${e.wins} V` : e.score;
-      li.append(who, val);
+      const li = h('li', 'p' + (i + 1));
+      li.append(tileImg(PODIUM_FACES[i], 'ov-tile'), h('span', null, e.pseudo), h('b', null, key === 'duel' ? `${e.wins} V` : e.score));
       podium.appendChild(li);
     });
     card.appendChild(podium);
     box.appendChild(card);
-  }
+  });
 }
 
+// Une catégorie : podium des trois dragons, puis la liste des suivants
 function renderTable(key, isDuel) {
-  const table = $('#board-table');
+  const podium = $('#board-podium');
+  const box = $('#board-table');
+  podium.innerHTML = '';
+  box.innerHTML = '';
   const list = key === 'daily' ? dailyList() : key === 'duel' ? duelList() : boardCache[key] || [];
-  const timed = key === 'daily' ? dailyChallenge(parisDate()).variant === 'timeattack' : BOARD.variant === 'timeattack';
-  table.innerHTML = '';
-  const me = (S.pseudo || '').toLowerCase();
-  const head = document.createElement('tr');
-  const cols = isDuel ? ['#', 'Pseudo', 'Victoires', 'Défaites', 'Ratio', 'Meilleur temps'] : ['#', 'Pseudo', 'Score', timed ? 'Durée' : 'Temps', timed ? 'Restantes' : 'Coups', 'Mélanges', 'Date'];
-  for (const c of cols) { const th = document.createElement('th'); th.textContent = c; head.appendChild(th); }
-  table.appendChild(head);
+  const timed = key === 'daily' ? dailyChallenge(boardDay()).variant === 'timeattack' : BOARD.variant === 'timeattack';
   if (!list.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = cols.length;
-    td.className = 'empty';
-    td.textContent = 'Aucun résultat pour l’instant. Sois le premier !';
-    tr.appendChild(td);
-    table.appendChild(tr);
+    podium.classList.add('hidden');
+    box.appendChild(boardEmpty(key === 'daily' && BOARD.day === 'today' ? 'Personne n’a encore relevé le défi du jour. À toi l’honneur !' : 'Aucun nom gravé ici pour l’instant. Sois le premier !'));
     return;
   }
-  list.forEach((e, i) => {
-    const tr = document.createElement('tr');
-    if (e.pseudo.toLowerCase() === me) tr.className = 'me';
-    const cells = isDuel
-      ? [i + 1, e.pseudo, e.wins, e.losses, Math.round((e.wins / Math.max(1, e.wins + e.losses)) * 100) + ' %', e.best ? fmtTime(e.best) : '—']
-      : [i + 1, e.pseudo, e.score, fmtTime(e.time), timed ? e.remaining || 0 : e.moves, e.shuffles ?? 0, new Date(e.date).toLocaleDateString('fr-FR')];
-    const cls = ['rank', 'pseudo', 'score'];
-    cells.forEach((v, k) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (cls[k]) td.className = cls[k];
-      tr.appendChild(td);
-    });
-    table.appendChild(tr);
+  podium.classList.remove('hidden');
+  const me = (S.pseudo || '').toLowerCase();
+  const value = (e) => (isDuel ? e.wins : e.score);
+  const detail = (e) => isDuel
+    ? `${e.losses} défaite${e.losses > 1 ? 's' : ''} · ${Math.round((e.wins / Math.max(1, e.wins + e.losses)) * 100)} %${e.best ? ' · record ' + fmtTime(e.best) : ''}`
+    : `${fmtTime(e.time)} · ${timed ? (e.remaining || 0) + ' restantes' : e.moves + ' coups'} · ${e.shuffles ?? 0} mélange${(e.shuffles ?? 0) > 1 ? 's' : ''}`;
+  // ordre d'affichage : 2e, 1er, 3e ; ordre d'arrivée : 3e, 2e, puis le champion
+  [1, 0, 2].forEach((i) => {
+    const e = list[i];
+    const slot = h('div', `pd pd${i + 1}${e ? '' : ' vacant'}${e && e.pseudo.toLowerCase() === me ? ' me' : ''}`);
+    slot.style.setProperty('--d', [2, 1, 0][i]);
+    const tile = h('div', 'pd-tile');
+    tile.appendChild(tileImg(PODIUM_FACES[i]));
+    const val = h('div', 'pd-val');
+    if (e) {
+      const b = h('b', null, '0');
+      b.dataset.count = value(e);
+      val.append(b, h('small', null, isDuel ? 'victoires' : 'points'));
+    } else val.appendChild(h('small', null, 'Place libre'));
+    const base = h('div', 'pd-base');
+    base.appendChild(h('span', 'pd-rank', ['1er', '2e', '3e'][i]));
+    slot.append(tile, h('div', 'pd-name', e ? e.pseudo : '—'), val, h('div', 'pd-sub', e ? detail(e) : ''), base);
+    podium.appendChild(slot);
   });
+  if (list.length > 3) {
+    const head = h('div', 'rk-head');
+    head.append(h('span', null, 'Rang'), h('span', null, 'Joueur'), h('span', null, isDuel ? 'Bilan' : 'Partie'), h('span', null, isDuel ? 'Victoires' : 'Score'));
+    box.appendChild(head);
+  }
+  const top = Math.max(1, value(list[0]));
+  list.slice(3).forEach((e, j) => {
+    const mine = e.pseudo.toLowerCase() === me;
+    const row = h('div', 'rk-row' + (mine ? ' me' : ''));
+    row.style.setProperty('--i', Math.min(j, 14));
+    row.style.setProperty('--p', Math.max(0.04, value(e) / top));
+    const who = h('span', 'rk-who');
+    who.appendChild(h('b', null, e.pseudo));
+    if (mine) who.appendChild(h('em', null, 'Toi'));
+    row.append(h('span', 'rk-rank', j + 4), who, h('span', 'rk-detail', detail(e)), h('span', 'rk-val', value(e)), h('i', 'rk-bar'));
+    box.appendChild(row);
+  });
+  countUpIn(podium);
 }
 
 // ================================================================ duel
@@ -1279,6 +1374,7 @@ function selectVariant(v, withSound) {
   S.menuVariant = VARIANTS_UI[v] ? v : 'classic';
   localStorage.setItem('mj_variant', S.menuVariant);
   $$('#variant-select button').forEach((b) => b.classList.toggle('active', b.dataset.variant === S.menuVariant));
+  $('#variant-info').textContent = VARIANTS_UI[S.menuVariant].rules + '.';
   $('#difficulty-select').classList.toggle('muted', S.menuVariant === 'zen');
   $('#difficulty-select').title = S.menuVariant === 'zen' ? 'En Zen, tout est permis : la difficulté ne compte pas.' : '';
   if (withSound) { sound.init(); sound.select(); }
@@ -1288,6 +1384,8 @@ function selectDifficulty(diff, withSound) {
   S.difficulty = DIFFS[diff] ? diff : 'normal';
   localStorage.setItem('mj_difficulty', S.difficulty);
   $$('#difficulty-select button').forEach((b) => b.classList.toggle('active', b.dataset.diff === S.difficulty));
+  const D = DIFFS[S.difficulty];
+  $('#difficulty-info').textContent = D.rules + (D.mult > 1 ? ` · score ×${String(D.mult).replace('.', ',')}` : '') + '.';
   $('#menu .menu-card').classList.toggle('hc', S.difficulty === 'hardcore');
   $('#menu .menu-card').classList.toggle('sm', S.difficulty === 'samurai');
   if (withSound) {
@@ -1343,6 +1441,7 @@ function bindUI() {
   $$('#variant-select button').forEach((b) => (b.onclick = () => selectVariant(b.dataset.variant, true)));
   selectVariant(S.menuVariant, false);
   $$('#board-variant button').forEach((b) => (b.onclick = () => { BOARD.variant = b.dataset.variant; buildBoardCats(); renderBoard(); }));
+  $$('#board-day button').forEach((b) => (b.onclick = () => { BOARD.day = b.dataset.day; buildBoardCats(); renderBoard(); }));
   const duelSel = $('#board-duel-layout');
   duelSel.append(new Option('Tous les plateaux', 'all'), ...Object.entries(LAYOUTS).map(([k, L]) => new Option(L.name, k)));
   duelSel.onchange = () => { BOARD.duelLayout = duelSel.value; buildBoardCats(); renderBoard(); };
@@ -1383,15 +1482,15 @@ function bindUI() {
     setSoundIcon();
   };
   $('#t-pause').onclick = () => togglePause();
-  $('#t-quit').onclick = () => (S.mode === 'duel' ? quitGame() : (S.ended ? showMenu() : confirm('Quitter la partie en cours ?') && showMenu()));
+  $('#t-quit').onclick = () => (S.mode === 'duel' ? quitGame() : confirmQuitSolo() && showMenu());
 
   // modales en jeu
   $('#s-shuffle').onclick = doShuffle;
   $('#s-undo').onclick = doUndo;
   $('#s-quit').onclick = () => (S.mode === 'solo' ? soloDefeat() : quitGame());
   $('#p-resume').onclick = () => togglePause(false);
-  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.diff, S.variant, S.daily); };
-  $('#p-quit').onclick = () => { S.paused = false; showMenu(); };
+  $('#p-restart').onclick = () => { if (S.daily) return; S.paused = false; newGame(S.layout, S.seed, 'solo', S.diff, S.variant); };
+  $('#p-quit').onclick = () => { if (!confirmQuitSolo()) return; S.paused = false; showMenu(); };
 
   // duel
   $('#d-create').onclick = () => { duel.send({ type: 'create', pseudo: S.pseudo, layout: S.layout, difficulty: S.difficulty }); duelWaiting('Création du salon…'); };
@@ -1455,6 +1554,17 @@ function bindUI() {
   }, 200);
 }
 
+// Chaque panneau reçoit sa crête de muraille (créneaux), ses quatre ferrures d'angle dorées
+// et un reflet de lumière qui balaie la laque
+function decoratePanels() {
+  for (const card of $$('.menu-card, .modal-card')) {
+    if (card.querySelector(':scope > .jf')) continue;
+    card.prepend(h('span', 'crest'));
+    for (const c of ['tl', 'tr', 'bl', 'br']) card.appendChild(h('span', 'jf ' + c));
+    card.appendChild(h('span', 'jsheen'));
+  }
+}
+
 async function init() {
   refreshIcons();
   sound.onTrack = (title) => { if (sound.musicOn && !sound.muted) toast(title, false, 'music', 'music'); };
@@ -1473,29 +1583,41 @@ async function init() {
     onLand: (kind) => (kind === 'firework' ? sound.firework() : sound.land()),
   });
   bindUI();
+  decoratePanels();
   showMenu(false); // plateau de démonstration en fond, menu encore caché
+  sound.prepare(); // graphe audio prêt avant le coup de gong (sinon le clic fige l'image)
+  step('Forge des portes du palais…');
+  await scene.startGate(); // la porte 3D, rendue par le même renderer que le temple
   step('Allumage des lanternes…');
   await scene.warmup(); // shaders compilés + premières images dessinées : plus d'écran uni
   clearTimeout(window.mjLoadTimer);
 
-  // Porte d'entrée : ce clic autorise le son (règle des navigateurs), la musique part tout de suite
+  // Porte du palais : on frappe le gong (ce clic autorise aussi le son, règle des navigateurs).
+  // Le gong ondule, les battants s'ouvrent, la caméra franchit le seuil et arrive sur le menu.
   const loader = $('#loader');
   loader.classList.add('ready');
   const enter = () => {
-    if (loader.classList.contains('fade')) return;
+    if (loader.classList.contains('struck')) return;
+    loader.classList.add('struck');
     removeEventListener('keydown', onKey);
     sound.init();
-    sound.select();
-    loader.classList.add('fade');
-    setTimeout(() => loader.remove(), 900);
-    setTimeout(() => {
+    const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // le coup part tout de suite ; le son suit dès qu'il est décodé (en général déjà fait,
+    // le décodage démarre à l'appui du pointeur), et on l'abandonne s'il arrive trop tard
+    const hitAt = performance.now();
+    sound.samplesReady.then(() => { if (performance.now() - hitAt < 600) sound.sample('gong-grand', { vol: 0.9 }); });
+    const entered = scene.gate ? scene.gate.strike({ calm }) : Promise.resolve();
+    entered.then(() => {
       $('#menu').classList.remove('hidden');
+      loader.classList.add('fade');
+      setTimeout(() => loader.remove(), 700);
       const code = new URLSearchParams(location.search).get('duel');
       if (code) openDuel(code.toUpperCase().slice(0, 4));
-    }, 350);
+    });
   };
   const onKey = (e) => { if (e.key === 'Enter' || e.key === ' ') enter(); };
-  $('#enter-btn').onclick = enter;
+  loader.addEventListener('click', enter); // frapper n'importe où sur la porte
+  loader.style.cursor = 'pointer';
   addEventListener('keydown', onKey);
   $('#enter-btn').focus();
 }

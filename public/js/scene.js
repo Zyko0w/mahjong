@@ -9,6 +9,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { drawFace, feltCanvas, woodCanvas, glowCanvas } from './textures.js';
 import { buildProps } from './props.js';
+import { Gate } from './gate.js';
 
 const TW = 1.0, TD = 1.34, TH = 0.72, GAP = 0.035;
 const SX = (TW + GAP) / 2, SZ = (TD + GAP) / 2;
@@ -67,7 +68,8 @@ export class Scene3D {
     c.autoRotateSpeed = 0.5;
 
     this.composer = new EffectComposer(r);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(this.renderPass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.6, 0.45, 1.25);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -345,6 +347,7 @@ export class Scene3D {
   // Compile tous les shaders et dessine quelques images avant d'afficher la page
   async warmup() {
     try { await this.renderer.compileAsync(this.scene, this.camera); } catch { /* ancien navigateur : compilation au premier rendu */ }
+    if (this.gate) this.gate.prime(); // la salle est dessinée une fois derrière la porte, avant le coup de gong
     for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r));
   }
 
@@ -819,7 +822,30 @@ export class Scene3D {
     t.x = THREE.MathUtils.clamp(t.x, -9, 9);
     t.z = THREE.MathUtils.clamp(t.z, -7, 7);
     t.y = THREE.MathUtils.clamp(t.y, -0.5, 3);
-    this.composer.render();
+    if (this.gate) this.gate.frame(dt);
+    else this.composer.render();
     this.renderPip();
+  }
+
+  // ------------------------------------------------------------ porte d'entrée (intro 3D)
+  async startGate() {
+    this.gate = new Gate(this);
+    this.controls.enabled = false;
+    await this.gate.warmup();
+  }
+
+  // Pendant que la caméra de la porte franchit le seuil, celle du temple arrive de loin
+  // vers la vue du menu : à travers les battants, on voit la salle se rapprocher.
+  introDolly(duration) {
+    const target = new THREE.Vector3(0, 2, 0);
+    const polar = 1.2, dist = 22;
+    const az = Math.atan2(this.camera.position.x, this.camera.position.z);
+    const end = new THREE.Vector3(Math.sin(az) * Math.sin(polar) * dist, Math.cos(polar) * dist, Math.cos(az) * Math.sin(polar) * dist).add(target);
+    const start = end.clone().sub(target).setLength(dist + 16).add(target).add(new THREE.Vector3(0, 3, 0));
+    this.camera.position.copy(start);
+    this.controls.target.copy(target);
+    this.controls.autoRotate = false;
+    this.controls.autoRotateSpeed = 0.3;
+    this.camAnim = { from: start, to: end, tFrom: target.clone(), tTo: target, t: 0, d: duration + 0.35, then: () => (this.controls.autoRotate = true) };
   }
 }

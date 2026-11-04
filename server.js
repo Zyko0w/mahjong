@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { LAYOUTS, cleanDifficulty, emptyBoard, normalizeBoard, cleanPseudo, parseScore, submitSolo, recordDuel, publicBoard } from './lib/leaderboard.js';
+import { LAYOUTS, cleanDifficulty, emptyBoard, normalizeBoard, cleanPseudo, parseScore, submitSolo, recordDuel, publicBoard, startDailyAttempt } from './lib/leaderboard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -164,7 +164,26 @@ const server = http.createServer((req, res) => {
         saveBoard();
         sendJSON(res, 200, result);
       } catch (e) {
+        if (e && e.status) return sendJSON(res, e.status, { error: e.message });
         sendJSON(res, 400, { error: "Partie refusée par le serveur (" + (e && e.message ? e.message : "données invalides") + ")." });
+      }
+    });
+    return;
+  }
+
+  if (p === '/api/daily-start' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const result = startDailyAttempt(board, JSON.parse(body));
+        saveBoard();
+        sendJSON(res, 200, result);
+      } catch (e) {
+        sendJSON(res, (e && e.status) || 400, { error: (e && e.status && e.message) || 'Données invalides' });
       }
     });
     return;
