@@ -15,7 +15,12 @@ export default async function handler(req, res) {
   const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!secret || !sameSecret(auth, secret)) return res.status(401).json({ error: 'Non autorisé' });
   if (!blobConfigured()) return res.status(503).json({ error: 'Classement non configuré : aucun store Vercel Blob relié à ce déploiement. ' + blobEnvHint() });
-  const d = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  let d;
+  try {
+    d = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  } catch {
+    return res.status(400).json({ error: 'Données invalides' });
+  }
   const winner = cleanPseudo(d.winner), loser = cleanPseudo(d.loser);
   const time = Number(d.time) > 0 && Number(d.time) < 36000 ? Number(d.time) : null;
   if (!winner || !loser) return res.status(400).json({ error: 'Données invalides' });
@@ -24,6 +29,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   } catch (e) {
     console.error('duel-result', e);
-    return res.status(500).json({ error: 'Enregistrement impossible' });
+    return res.status(500).json({ error: 'Enregistrement impossible : ' + (e && e.message ? e.message : e) });
   }
 }

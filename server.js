@@ -67,18 +67,27 @@ function saveBoard() {
 // Résultat de duel : vers le classement Vercel si configuré, sinon dans le fichier local
 async function reportDuel(winner, loser, time) {
   if (LEADERBOARD_URL && DUEL_SECRET) {
-    try {
-      const r = await fetch(LEADERBOARD_URL + '/api/duel-result', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DUEL_SECRET },
-        body: JSON.stringify({ winner, loser, time }),
-      });
-      if (!r.ok) console.warn('duel-result refusé :', r.status, await r.text());
-    } catch (e) {
-      console.warn('duel-result injoignable :', e.message);
+    // Plusieurs essais : un résultat de duel ne doit pas se perdre sur une erreur passagère
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const r = await fetch(LEADERBOARD_URL + '/api/duel-result', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DUEL_SECRET },
+          body: JSON.stringify({ winner, loser, time }),
+        });
+        if (r.ok) return;
+        const text = await r.text();
+        console.warn(`duel-result refusé (essai ${attempt}) :`, r.status, text);
+        if (r.status >= 400 && r.status < 500) return; // secret ou données refusés : inutile d'insister
+      } catch (e) {
+        console.warn(`duel-result injoignable (essai ${attempt}) :`, e.message);
+      }
+      await new Promise((res) => setTimeout(res, 1000 * attempt));
     }
+    console.error('duel-result abandonné :', winner, 'contre', loser);
     return;
   }
+  if (LEADERBOARD_URL && !DUEL_SECRET) console.warn('LEADERBOARD_URL défini sans DUEL_SECRET : résultat gardé en local seulement.');
   recordDuel(board, winner, loser, time);
   saveBoard();
 }
@@ -131,7 +140,7 @@ const server = http.createServer((req, res) => {
   const p = decodeURIComponent(url.pathname);
 
   if (p === '/api/leaderboard' && req.method === 'GET') return sendJSON(res, 200, publicBoard(board));
-  if (p === '/health') return sendJSON(res, 200, { ok: true, rooms: rooms.size });
+  if (p === '/health') return sendJSON(res, 200, { ok: true, rooms: rooms.size, waiting: quickQueue.length });
   // Configuration du client (équivalent du fichier généré par « npm run build » pour Vercel)
   if (p === '/config.js') {
     res.writeHead(200, { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-store' });
@@ -175,7 +184,8 @@ const wss = new WebSocketServer({
   verifyClient: ({ origin }) => !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(String(origin || '').replace(/\/+$/, '')),
 });
 const rooms = new Map();
-const quickQueue = {}; // clé : forme + difficulté
+// File d'attente de la recherche rapide : { ws, layout, difficulty, since }
+let quickQueue = [];
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 function send(ws, msg) {
@@ -202,7 +212,7 @@ function other(room, ws) {
 }
 
 function leaveAll(ws) {
-  for (const k of Object.keys(quickQueue)) if (quickQueue[k] === ws) delete quickQueue[k];
+  quickQueue = quickQueue.filter((q) => q.ws !== ws);
   const room = ws.room;
   if (!room) return;
   ws.room = null;
@@ -266,7 +276,6 @@ wss.on('connection', (ws) => {
     const layout = LAYOUTS.includes(msg.layout) ? msg.layout : 'express';
     const difficulty = cleanDifficulty(msg.difficulty, msg.hardcore);
     const hardcore = difficulty !== 'normal';
-    const qKey = layout + ':' + difficulty;
 
     switch (msg.type) {
       case 'create': {
@@ -300,20 +309,27 @@ wss.on('connection', (ws) => {
       }
       case 'quick': {
         leaveAll(ws);
-        const waiting = quickQueue[qKey];
-        if (waiting && waiting.readyState === 1 && samePlayer(waiting, ws) && waiting !== ws) {
-          // le même joueur cherche déjà (autre onglet) : on ne l'appaire pas avec lui-même
-          return send(ws, { type: 'error', message: 'Tu cherches déjà un adversaire dans un autre onglet.' });
-        }
-        if (waiting && waiting !== ws && waiting.readyState === 1) {
-          delete quickQueue[qKey];
-          const room = { code: newCode(), layout, difficulty, hardcore, players: [waiting, ws], state: 'waiting', rematch: new Set() };
+        quickQueue = quickQueue.filter((q) => q.ws.readyState === 1 && !q.ws.room);
+        // Adversaire possible : quelqu'un d'autre que soi (autre onglet, même pseudo)
+        const others = quickQueue.filter((q) => !samePlayer(q.ws, ws));
+        // Priorité : même forme et même difficulté, puis même difficulté, puis n'importe qui.
+        // La partie se joue alors avec les réglages de celui qui attendait déjà.
+        const pick =
+          others.find((q) => q.layout === layout && q.difficulty === difficulty) ||
+          others.find((q) => q.difficulty === difficulty) ||
+          others[0];
+        if (pick) {
+          quickQueue = quickQueue.filter((q) => q !== pick);
+          const room = { code: newCode(), layout: pick.layout, difficulty: pick.difficulty, hardcore: pick.difficulty !== 'normal', players: [pick.ws, ws], state: 'waiting', rematch: new Set() };
           rooms.set(room.code, room);
-          waiting.room = room;
+          pick.ws.room = room;
           ws.room = room;
           startMatch(room);
+        } else if (quickQueue.some((q) => samePlayer(q.ws, ws))) {
+          // le même joueur cherche déjà (autre onglet) : on ne l'appaire pas avec lui-même
+          send(ws, { type: 'error', message: 'Tu cherches déjà un adversaire dans un autre onglet (ou avec ce pseudo).' });
         } else {
-          quickQueue[qKey] = ws;
+          quickQueue.push({ ws, layout, difficulty, since: Date.now() });
           send(ws, { type: 'queued', layout, difficulty });
         }
         break;

@@ -603,7 +603,9 @@ async function victory() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
-    setRank(data.improved ? `Classé n°${data.rank} en ${L.name}${S.hc ? ' ' + curDiff().name : ''} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
+    const where = `${L.name}${S.hc ? ' ' + curDiff().name : ''}`;
+    if (!data.rank) setRank(`Score enregistré, mais hors du top 100 en ${where}.`, 'info');
+    else setRank(data.improved ? `Classé n°${data.rank} en ${where} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
   } catch (e) {
     setRank(e.message && !/fetch|JSON/i.test(e.message) ? 'Score non enregistré : ' + e.message : "Impossible d'enregistrer le score (serveur injoignable).", 'info');
   }
@@ -743,7 +745,7 @@ async function showBoard(cat = 'overview', diff = BOARD.diff) {
   buildBoardCats();
   $('#board-table').innerHTML = '<tr><td class="empty">Chargement…</td></tr>';
   try {
-    const r = await fetch('/api/leaderboard');
+    const r = await fetch('/api/leaderboard', { cache: 'no-store' });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Classement indisponible (' + r.status + ').');
     boardCache = data;
@@ -953,7 +955,7 @@ function onDuelMessage(msg) {
       duelWaiting('Salon créé ! Envoie ce code à ton adversaire :', msg.code);
       break;
     case 'queued':
-      duelWaiting(`Recherche d'un adversaire (${LAYOUTS[msg.layout].name}${msg.difficulty && msg.difficulty !== 'normal' ? ', ' + diffOf(msg.difficulty).name : ''})…`);
+      duelWaiting(`Recherche d'un adversaire… (de préférence en ${LAYOUTS[msg.layout].name}${msg.difficulty && msg.difficulty !== 'normal' ? ', ' + diffOf(msg.difficulty).name : ''} ; sinon tu rejoins la partie d'un joueur qui attend)`);
       break;
     case 'error':
       duelReset();
