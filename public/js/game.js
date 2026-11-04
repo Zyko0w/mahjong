@@ -201,7 +201,9 @@ export class MahjongGame {
     }
     const pairs = [];
     for (const faces of byGroup.values()) for (let i = 0; i + 1 < faces.length; i += 2) pairs.push([faces[i], faces[i + 1]]);
-    const rng = mulberry32((Math.random() * 2 ** 31) | 0);
+    // Graine déterministe (graine de la donne + numéro du mélange) : le serveur peut rejouer la partie
+    this.shuffleCount = (this.shuffleCount || 0) + 1;
+    const rng = mulberry32((this.seed ^ Math.imul(this.shuffleCount, 0x9e3779b1)) >>> 0);
     shuffleInPlace(pairs, rng);
     const order = solvableOrder(this.rel, this.alive, rng);
     if (order) {

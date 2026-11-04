@@ -25,7 +25,7 @@ export default async function handler(req, res) {
   const time = Number(d.time) > 0 && Number(d.time) < 36000 ? Number(d.time) : null;
   if (!winner || !loser) return res.status(400).json({ error: 'Données invalides' });
   try {
-    await updateBoard((board) => recordDuel(board, winner, loser, time));
+    await updateBoard((board) => recordDuel(board, winner, loser, time, d.layout, d.difficulty));
     return res.status(200).json({ ok: true });
   } catch (e) {
     console.error('duel-result', e);

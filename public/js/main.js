@@ -5,6 +5,7 @@ import { MahjongGame, LAYOUTS, FACE_NAMES } from './game.js';
 import { Sound } from './audio.js';
 import { DuelClient } from './net.js';
 import { loadFaceFonts } from './textures.js';
+import { Run, COMBO_WINDOW, dailyChallenge, parisDate, shiftDate } from './rules.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -35,8 +36,6 @@ function disposeOpponent() {
   if (scene) scene.resetDuel();
 }
 
-const PENALTY = { hint: 30, shuffle: 80, undo: 20 };
-const COMBO_WINDOW = 5000;
 const DUEL_HINT_COOLDOWN = 10000;
 // Difficultés : indices autorisés, nombre de mélanges, multiplicateur de score, suffixe de classement
 const DIFFS = {
@@ -46,6 +45,15 @@ const DIFFS = {
 };
 const diffOf = (d) => DIFFS[d] || DIFFS.normal;
 const curDiff = () => diffOf(S.diff);
+// Modes solo (le duel se joue toujours en Classique)
+const VARIANTS_UI = {
+  classic: { name: 'Classique', icon: 'layers', glyph: null, rules: 'Le mahjong solitaire de toujours', suffix: '' },
+  timeattack: { name: 'Contre la montre', icon: 'timer', glyph: '速', rules: 'Chaque paire rajoute des secondes', suffix: '_ta' },
+  blind: { name: 'Aveugle', icon: 'eye-off', glyph: '闇', rules: 'Tuiles bloquées face cachée · ×1,25', suffix: '_bl' },
+  zen: { name: 'Zen', icon: 'flower-2', glyph: '禅', rules: 'Ni chrono, ni score, ni limite', suffix: null },
+};
+const variantOf = (v) => VARIANTS_UI[v] || VARIANTS_UI.classic;
+const curVariant = () => variantOf(S.variant);
 
 const S = {
   mode: 'solo',
@@ -53,6 +61,10 @@ const S = {
   pseudo: localStorage.getItem('mj_pseudo') || '',
   assist: localStorage.getItem('mj_assist') !== '0',
   difficulty: DIFFS[localStorage.getItem('mj_difficulty')] ? localStorage.getItem('mj_difficulty') : localStorage.getItem('mj_hardcore') === '1' ? 'hardcore' : 'normal', // choisie dans le menu
+  menuVariant: VARIANTS_UI[localStorage.getItem('mj_variant')] ? localStorage.getItem('mj_variant') : 'classic', // mode choisi dans le menu
+  variant: 'classic', // mode de la partie en cours
+  daily: null, // date du défi du jour en cours
+  run: null, // règles + journal des coups de la partie en cours (rules.js)
   diff: 'normal', // difficulté de la partie en cours
   hc: false, // difficulté de la partie en cours
   game: null,
@@ -73,6 +85,18 @@ function fmtTime(sec) {
   sec = Math.max(0, sec);
   const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Horloge de la partie en millisecondes (les pauses ne comptent pas)
+function clock() {
+  const live = S.running && !S.paused ? (performance.now() - S.lastTick) / 1000 : 0;
+  return Math.round((S.elapsed + live) * 1000);
+}
+
+// Recopie l'état de la partie (score, combo…) dans S, utilisé par le HUD et le duel
+function syncRun() {
+  const r = S.run;
+  Object.assign(S, { score: r.score, combo: r.combo, maxCombo: r.maxCombo, moves: r.moves, hints: r.hints, shuffles: r.shuffles, undos: r.undos });
 }
 
 const EMOTES = { wave: ['hand', 'Salut !'], fire: ['flame', 'En feu !'], laugh: ['laugh', 'Haha !'], angry: ['angry', 'Grrr !'], zap: ['zap', 'Éclair !'] };
@@ -170,6 +194,7 @@ function showMenu(reveal = true) {
   document.body.style.cursor = 'default';
   disposeOpponent();
   sound.setTrack('menu');
+  refreshDailyButton();
   // Plateau de démonstration en fond
   const demo = new MahjongGame('classic', (Math.random() * 2 ** 31) | 0);
   S.game = null;
@@ -232,23 +257,31 @@ function playTransition({ glyph, title, sub, hc = false, duel = false, left = ''
 }
 
 // ================================================================ partie
-async function newGame(layout, seed, mode, difficulty = S.difficulty) {
+async function newGame(layout, seed, mode, difficulty = S.difficulty, variant = 'classic', daily = null) {
+  if (mode === 'duel' || !VARIANTS_UI[variant]) variant = 'classic';
+  if (variant === 'zen' || daily) difficulty = 'normal';
   const D = diffOf(difficulty);
+  const V = variantOf(variant);
   const hardcore = difficulty !== 'normal';
   S.diff = DIFFS[difficulty] ? difficulty : 'normal';
+  S.variant = variant;
+  S.daily = daily;
   S.mode = mode;
   S.hc = hardcore; // mode à contraintes (hardcore ou samouraï)
   S.layout = layout;
   S.seed = seed;
-  S.game = new MahjongGame(layout, seed);
-  sound.setTrack(mode);
-  Object.assign(S, { selected: null, running: false, paused: false, busy: true, ended: false, pending: 0, moves: 0, score: 0, combo: 0, maxCombo: 0, lastMatch: 0, hints: 0, shuffles: 0, undos: 0, elapsed: 0 });
+  S.run = new Run({ layout, seed, difficulty: S.diff, variant, penalties: mode === 'solo' });
+  S.game = S.run.game;
+  sound.setTrack(variant === 'zen' ? 'menu' : mode);
+  Object.assign(S, { selected: null, running: false, paused: false, busy: true, ended: false, pending: 0, elapsed: 0, lastBeep: null });
+  syncRun();
   closeModals();
   const L = LAYOUTS[layout];
+  const tags = [daily ? 'Défi du jour' : null, variant !== 'classic' ? V.name : null, hardcore ? D.name : null].filter(Boolean);
   const tr = playTransition(
     mode === 'duel'
       ? { duel: true, glyph: '戰', title: 'Duel !', sub: `${L.name}${hardcore ? ' · ' + D.name : ''}`, left: S.pseudo, right: S.duel.opponent, hc: hardcore }
-      : { glyph: D.glyph, title: L.name, sub: hardcore ? `${D.name} · ${D.rules.toLowerCase()}` : L.desc, hc: hardcore }
+      : { glyph: daily ? '日' : V.glyph || D.glyph, title: L.name, sub: tags.length ? `${tags.join(' · ')} · ${(variant !== 'classic' ? V.rules : D.rules).toLowerCase()}` : L.desc, hc: hardcore }
   );
   const gameRef = S.game;
   await tr.covered; // l'écran est couvert : on prépare le plateau sans saccade visible
@@ -257,10 +290,16 @@ async function newGame(layout, seed, mode, difficulty = S.difficulty) {
   $('#hud').classList.remove('hidden');
   $('#duel-panel').classList.toggle('hidden', mode !== 'duel');
   $('#t-pause').disabled = mode === 'duel';
-  $('#hardcore-tag').classList.toggle('hidden', !hardcore);
-  $('#hardcore-tag').classList.toggle('samurai', difficulty === 'samurai');
-  $('#hardcore-tag').innerHTML = '';
-  $('#hardcore-tag').append(icon(D.icon), ' ' + D.name);
+  const tag = $('#hardcore-tag');
+  tag.classList.toggle('hidden', !tags.length);
+  tag.classList.toggle('samurai', difficulty === 'samurai');
+  tag.classList.toggle('mode', !hardcore);
+  tag.innerHTML = '';
+  tag.append(icon(daily ? 'calendar-days' : hardcore ? D.icon : V.icon), ' ' + tags.join(' · '));
+  $('#h-time-label').textContent = variant === 'timeattack' ? 'Temps restant' : 'Temps';
+  $('#h-time').parentElement.classList.toggle('hidden', variant === 'zen');
+  $('#h-time').classList.remove('low');
+  $('.score-box').classList.toggle('hidden', variant === 'zen');
   refreshIcons();
   $('#selected-info').textContent = '';
   scene.controls.autoRotate = false;
@@ -299,7 +338,13 @@ function startClock() {
 function refreshBoard() {
   const g = S.game;
   if (!g) return;
-  for (const t of g.tiles) if (g.alive[t.id]) scene.setBlocked(t.id, S.assist && !g.isFree(t.id));
+  const blind = S.variant === 'blind';
+  for (const t of g.tiles) {
+    if (!g.alive[t.id]) continue;
+    const free = g.isFree(t.id);
+    scene.setBlocked(t.id, S.assist && !free);
+    if (blind) scene.setHidden(t.id, !free, g.face(t.id));
+  }
   const pairs = g.availablePairs().length;
   $('#h-pairs').textContent = pairs;
   $('#h-pairs').classList.toggle('zero', pairs === 0 && g.remaining > 0);
@@ -308,16 +353,17 @@ function refreshBoard() {
 function updateHUD() {
   const g = S.game;
   if (!g) return;
-  $('#h-time').textContent = fmtTime(S.elapsed);
+  updateClock();
   $('#h-moves').textContent = S.moves;
   $('#h-tiles').textContent = g.remaining;
   $('#h-score').textContent = S.score;
   $('#t-undo').disabled = g.history.length === 0;
   const D = curDiff();
-  $('#t-hint').disabled = !D.hints;
-  $('#t-hint').title = D.hints ? 'Indice (H)' : `Pas d’indice en ${D.name}`;
-  const left = D.shuffles - S.shuffles;
-  $('#shuffle-left').classList.toggle('hidden', !Number.isFinite(D.shuffles));
+  const R = S.run;
+  $('#t-hint').disabled = !R.hintsAllowed;
+  $('#t-hint').title = R.hintsAllowed ? 'Indice (H)' : `Pas d’indice en ${D.name}`;
+  const left = R.shufflesAllowed - S.shuffles;
+  $('#shuffle-left').classList.toggle('hidden', !Number.isFinite(R.shufflesAllowed));
   $('#shuffle-left').textContent = Math.max(0, left);
   $('#t-shuffle').disabled = left <= 0;
   if (S.mode === 'duel') {
@@ -328,6 +374,16 @@ function updateHUD() {
     $('#d-opp-left').textContent = S.duel.oppRemaining;
     $('#d-opp-bar').style.width = ((g.total - S.duel.oppRemaining) / g.total) * 100 + '%';
   }
+}
+
+// Chrono : temps écoulé, ou temps restant en contre-la-montre (rouge sous 15 s)
+function updateClock() {
+  if (!S.run) return;
+  if (S.run.timed) {
+    const left = Math.max(0, S.run.timeLeft(clock()));
+    $('#h-time').textContent = fmtTime(Math.ceil(left / 1000));
+    $('#h-time').classList.toggle('low', left < 15000);
+  } else $('#h-time').textContent = fmtTime(S.elapsed);
 }
 
 function sendProgress() {
@@ -380,18 +436,16 @@ function onTileClick(id) {
 
 async function doMatch(a, b) {
   const g = S.game;
+  const res = S.run.match(clock(), a, b);
+  if (!res) {
+    if (S.run.expired(clock())) timeUp();
+    return;
+  }
   select(null);
-  g.match(a, b);
+  syncRun();
   sendAct({ k: 'match', a, b });
   scene.clearHints();
-  S.moves++;
-  const now = performance.now();
-  S.combo = now - S.lastMatch < COMBO_WINDOW ? S.combo + 1 : 1;
-  S.lastMatch = now;
-  S.maxCombo = Math.max(S.maxCombo, S.combo);
-  const mult = Math.min(S.combo, 5);
-  const pts = 20 * mult;
-  S.score += pts;
+  const { pts, mult, gain } = res;
   sound.match(S.combo);
   const comboEl = $('#h-combo');
   comboEl.textContent = S.combo > 1 ? `COMBO ×${mult}` : '';
@@ -406,13 +460,13 @@ async function doMatch(a, b) {
   const mid = await scene.removePair(a, b);
   S.pending--;
   if (S.game !== gameRef) return;
-  floater(`+${pts}${mult > 1 ? ' ×' + mult : ''}`, mid, mult >= 3 ? 'combo-big' : '');
+  if (S.variant !== 'zen') floater(`+${pts}${mult > 1 ? ' ×' + mult : ''}${gain ? ` · +${gain / 1000} s` : ''}`, mid, mult >= 3 ? 'combo-big' : '');
   if (g.remaining === 0) return victory();
   if (S.pending === 0 && g.availablePairs().length === 0 && !S.ended) stuck();
 }
 
 function stuck() {
-  const D = curDiff();
+  const D = { name: curDiff().name, shuffles: S.run.shufflesAllowed };
   const noShuffle = S.shuffles >= D.shuffles;
   $('#s-undo').disabled = S.game.history.length === 0;
   $('#s-shuffle').disabled = noShuffle;
@@ -426,40 +480,87 @@ function stuck() {
 
 // Défaite en solo (abandon quand le plateau est bloqué)
 function soloDefeat() {
+  if (S.run.timed) return timeUp(true);
   S.running = false;
   S.ended = true;
   select(null);
   sound.lose();
+  if (S.daily) markDailyPlayed(S.daily);
   const L = LAYOUTS[S.layout];
   $('#end-glyph').textContent = '敗';
   $('#end-glyph').classList.add('lose');
   $('#end-title').textContent = 'Partie perdue';
-  $('#end-sub').textContent = `${L.name}${S.hc ? ' en ' + curDiff().name : ''} : le plateau est resté bloqué.`;
+  $('#end-sub').textContent = `${L.name}${modeLabel(' en ')} : le plateau est resté bloqué.`;
   $('#end-stats').innerHTML =
     statCell('Tuiles restantes', S.game.remaining, true) +
     statCell('Temps', fmtTime(S.elapsed)) +
     statCell('Coups', S.moves) +
     statCell('Mélanges', S.shuffles);
   setRank('', null);
-  setEndActions([
-    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff), null, 'rotate-ccw'],
-    ['Menu', 'ghost', showMenu, null, 'house'],
-  ]);
+  setEndActions(endButtons(false));
   openModal('#m-end');
+}
+
+// Fin du contre-la-montre : temps écoulé, ou abandon quand le plateau est bloqué
+function timeUp(gaveUp = false) {
+  if (S.ended || !S.run || !S.run.timed || S.game.remaining === 0) return; // plateau vidé : la victoire arrive
+  const endT = gaveUp ? clock() : S.run.deadline();
+  S.running = false;
+  S.ended = true;
+  S.elapsed = endT / 1000;
+  select(null);
+  closeModals();
+  sound.lose();
+  const { score } = S.run.finish(endT);
+  S.score = score;
+  updateHUD();
+  $('#h-time').textContent = gaveUp ? $('#h-time').textContent : '00:00';
+  const L = LAYOUTS[S.layout];
+  const pairs = (S.game.total - S.game.remaining) / 2;
+  $('#end-glyph').textContent = '時';
+  $('#end-glyph').classList.add('lose');
+  $('#end-title').textContent = gaveUp ? 'Partie terminée' : 'Temps écoulé !';
+  $('#end-sub').textContent = `${S.pseudo}, tu as retiré ${pairs} paire${pairs > 1 ? 's' : ''} sur ${S.game.total / 2} dans ${L.name}${modeLabel(' en ')}.`;
+  $('#end-stats').innerHTML =
+    statCell('Score', S.score, true) +
+    statCell('Paires', `${pairs}/${S.game.total / 2}`) +
+    statCell('Durée', fmtTime(S.elapsed)) +
+    statCell('Combo max', '×' + Math.min(5, S.maxCombo)) +
+    statCell('Coups', S.moves) +
+    statCell('Mélanges', S.shuffles);
+  setEndActions(endButtons());
+  setTimeout(() => openModal('#m-end'), 900);
+  submitScore(endT);
+}
+
+// « en Aveugle · Hardcore », « (défi du jour) »… pour les textes de fin
+function modeLabel(prefix) {
+  const parts = [S.variant !== 'classic' ? curVariant().name : null, S.hc ? curDiff().name : null].filter(Boolean);
+  return (parts.length ? prefix + parts.join(' · ') : '') + (S.daily ? ' (défi du jour)' : '');
+}
+
+function endButtons(withBoard = true) {
+  const out = [
+    S.daily
+      ? ['Réessayer', 'primary', () => newGame(S.layout, S.seed, 'solo', 'normal', S.variant, S.daily), null, 'rotate-ccw']
+      : ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff, S.variant), null, 'rotate-ccw'],
+  ];
+  if (withBoard && S.variant !== 'zen') out.push(['Classement', 'ghost', () => (S.daily ? showBoard('daily') : showBoard(S.layout, S.diff, S.variant)), null, 'trophy']);
+  out.push(['Menu', 'ghost', showMenu, null, 'house']);
+  return out;
 }
 
 function doHint() {
   if (!canPlay() || S.busy) return;
-  if (!curDiff().hints) return toast(`Pas d’indice en ${curDiff().name} !`, false, curDiff().icon);
+  if (!S.run.hintsAllowed) return toast(`Pas d’indice en ${curDiff().name} !`, false, curDiff().icon);
   if (S.mode === 'duel') {
     const wait = S.duel.hintReadyAt - performance.now();
     if (wait > 0) return toast(`Indice disponible dans ${Math.ceil(wait / 1000)} s`, false, 'timer');
     S.duel.hintReadyAt = performance.now() + DUEL_HINT_COOLDOWN;
   }
-  const h = S.game.hint();
-  if (!h) return stuck();
-  S.hints++;
-  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.hint);
+  const h = S.run.hint(clock());
+  if (!h) return S.run.expired(clock()) ? timeUp() : stuck();
+  syncRun();
   scene.hint(h);
   sound.hint();
   updateHUD();
@@ -467,16 +568,16 @@ function doHint() {
 
 async function doShuffle() {
   if (!S.game || !S.running || S.paused || S.busy || S.ended || S.pending) return;
-  if (S.shuffles >= curDiff().shuffles) return toast(curDiff().shuffles ? `Plus aucun mélange en ${curDiff().name} !` : `Aucun mélange en ${curDiff().name} : fie-toi à ton sabre !`, false, curDiff().icon);
+  const maxShuffles = S.run.shufflesAllowed;
+  if (S.shuffles >= maxShuffles) return toast(maxShuffles ? `Plus aucun mélange en ${curDiff().name} !` : `Aucun mélange en ${curDiff().name} : fie-toi à ton sabre !`, false, curDiff().icon);
+  const ids = S.run.shuffle(clock());
+  if (!ids) return;
   closeModals();
   S.busy = true;
   select(null);
-  const ids = S.game.shuffle();
+  syncRun();
   sendAct({ k: 'shuf', faces: ids.map((id) => [id, S.game.face(id)]) });
-  S.shuffles++;
-  S.combo = 0;
-  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.shuffle);
-  if (Number.isFinite(curDiff().shuffles)) toast(S.shuffles >= curDiff().shuffles ? 'Dernier mélange utilisé !' : `Mélanges restants : ${curDiff().shuffles - S.shuffles}`, false, curDiff().icon);
+  if (Number.isFinite(maxShuffles)) toast(S.shuffles >= maxShuffles ? 'Dernier mélange utilisé !' : `Mélanges restants : ${maxShuffles - S.shuffles}`, false, curDiff().icon);
   sound.shuffle();
   updateHUD();
   await scene.shuffleAnim(S.game, ids);
@@ -487,17 +588,14 @@ async function doShuffle() {
 
 function doUndo() {
   if (!S.game || !S.running || S.paused || S.busy || S.ended || S.pending) return;
-  const last = S.game.undo();
+  const last = S.run.undo(clock());
   if (!last) return;
+  syncRun();
   closeModals();
   select(null);
   scene.restorePair(last[0], last[1]);
   sendAct({ k: 'undo', a: last[0], b: last[1] });
-  S.undos++;
-  S.moves++;
-  S.combo = 0;
   $('#h-combo').textContent = '';
-  if (S.mode === 'solo') S.score = Math.max(0, S.score - PENALTY.undo);
   sound.undo();
   refreshBoard();
   updateHUD();
@@ -571,44 +669,93 @@ async function victory() {
   }
   S.ended = true;
   const L = LAYOUTS[S.layout];
-  const timeBonus = Math.max(0, Math.round((L.par - S.elapsed) * 5));
-  const base = S.score;
-  S.score = Math.round((base + L.bonus + timeBonus) * curDiff().mult);
-  updateHUD();
+  const endT = S.run.lastT; // fin officielle = dernière paire (le serveur compte pareil)
+  S.elapsed = endT / 1000;
   scene.celebrate();
   sound.win();
-  $('#end-glyph').textContent = '勝';
   $('#end-glyph').classList.remove('lose');
+  if (S.variant === 'zen') {
+    $('#end-glyph').textContent = '禅';
+    $('#end-title').textContent = 'Plateau apaisé';
+    $('#end-sub').textContent = `${L.name} est vide. Respire, puis recommence quand tu veux.`;
+    $('#end-stats').innerHTML = statCell('Paires', S.game.total / 2, true) + statCell('Coups', S.moves) + statCell('Mélanges', S.shuffles);
+    setRank('', null);
+    setEndActions(endButtons(false));
+    setTimeout(() => openModal('#m-end'), 1600);
+    return;
+  }
+  const { score, timeBonus } = S.run.finish(endT);
+  S.score = score;
+  updateHUD();
+  const mult = curDiff().mult * (S.variant === 'blind' ? 1.25 : 1);
+  $('#end-glyph').textContent = '勝';
   $('#end-title').textContent = S.hc ? `Victoire ${curDiff().name} !` : 'Victoire !';
-  $('#end-sub').textContent = `${S.pseudo}, tu as vidé ${L.name} — ${L.desc}${S.hc ? ` — en ${curDiff().name} (score ×${String(curDiff().mult).replace('.', ',')})` : ''}.`;
+  $('#end-sub').textContent = `${S.pseudo}, tu as vidé ${L.name} — ${L.desc}${modeLabel(' — en ')}${mult !== 1 ? ` (score ×${String(mult).replace('.', ',')})` : ''}.`;
   $('#end-stats').innerHTML =
     statCell('Score', S.score, true) +
-    statCell('Temps', fmtTime(S.elapsed)) +
+    statCell(S.run.timed ? 'Durée' : 'Temps', fmtTime(S.elapsed)) +
     statCell('Coups', S.moves) +
-    statCell('Bonus temps', '+' + timeBonus) +
+    statCell(S.run.timed ? 'Bonus chrono' : 'Bonus temps', '+' + timeBonus) +
     statCell('Indices', S.hints) +
     statCell('Mélanges', S.shuffles);
-  $('#end-rank').textContent = 'Envoi au classement…';
-  setEndActions([
-    ['Rejouer', 'primary', () => newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.diff), null, 'rotate-ccw'],
-    ['Classement', 'ghost', () => showBoard(S.layout, S.diff), null, 'trophy'],
-    ['Menu', 'ghost', showMenu, null, 'house'],
-  ]);
+  setEndActions(endButtons());
   setTimeout(() => openModal('#m-end'), 1600);
+  submitScore(endT);
+}
+
+// Envoie la partie au serveur : il rejoue la liste des coups et recalcule lui-même le score.
+async function submitScore(endT) {
+  const L = LAYOUTS[S.layout];
+  const where = S.daily ? 'défi du jour' : `${L.name}${modeLabel(' ')}`;
+  const run = S.run;
+  if (S.daily) markDailyPlayed(S.daily);
+  $('#end-rank').textContent = 'Envoi au classement…';
   try {
     const res = await fetch('/api/score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pseudo: S.pseudo, layout: S.layout, time: S.elapsed, moves: S.moves, score: S.score, hints: S.hints, shuffles: S.shuffles, difficulty: S.diff, hardcore: S.diff === 'hardcore' }),
+      body: JSON.stringify({ pseudo: S.pseudo, layout: S.layout, seed: S.seed, difficulty: S.diff, variant: S.variant, daily: S.daily || undefined, log: run.log, end: endT }),
     });
     const data = await res.json();
+    if (S.run !== run) return; // une autre partie a commencé entre-temps
     if (!res.ok) throw new Error(data.error);
-    const where = `${L.name}${S.hc ? ' ' + curDiff().name : ''}`;
     if (!data.rank) setRank(`Score enregistré, mais hors du top 100 en ${where}.`, 'info');
     else setRank(data.improved ? `Classé n°${data.rank} en ${where} !` : `Ton record précédent reste meilleur (n°${data.rank}).`, data.improved ? 'medal' : 'info');
   } catch (e) {
+    if (S.run !== run) return;
     setRank(e.message && !/fetch|JSON/i.test(e.message) ? 'Score non enregistré : ' + e.message : "Impossible d'enregistrer le score (serveur injoignable).", 'info');
   }
+}
+
+// ---------------------------------------------------------------- défi du jour
+function dailyStreak() {
+  const last = localStorage.getItem('mj_daily_last');
+  const today = parisDate();
+  if (last !== today && last !== shiftDate(today, -1)) return 0;
+  return +localStorage.getItem('mj_daily_streak') || 0;
+}
+
+function markDailyPlayed(date) {
+  const last = localStorage.getItem('mj_daily_last');
+  if (last === date) return;
+  const streak = last === shiftDate(date, -1) ? (+localStorage.getItem('mj_daily_streak') || 0) + 1 : 1;
+  localStorage.setItem('mj_daily_last', date);
+  localStorage.setItem('mj_daily_streak', String(streak));
+  if (streak > 1) toast(`Série de défis : ${streak} jours d'affilée !`, false, 'flame');
+}
+
+function refreshDailyButton() {
+  const ch = dailyChallenge(parisDate());
+  const done = localStorage.getItem('mj_daily_last') === ch.date;
+  const streak = dailyStreak();
+  $('#daily-info').textContent = `${LAYOUTS[ch.layout].name} · ${variantOf(ch.variant).name}${streak ? ` · série de ${streak} j` : ''}${done ? ' · joué' : ''}`;
+}
+
+function startDaily() {
+  sound.init();
+  if (!validPseudo()) return;
+  const ch = dailyChallenge(parisDate());
+  newGame(ch.layout, ch.seed, 'solo', 'normal', ch.variant, ch.date);
 }
 
 function duelResult(msg) {
@@ -666,7 +813,7 @@ function duelResult(msg) {
       re.textContent = 'En attente…';
     }, 'btn-rematch');
     if (S.duel.oppLeft) re.disabled = true;
-    mk('Classement', 'ghost', 'trophy', () => showBoard('duel'));
+    mk('Classement', 'ghost', 'trophy', () => { BOARD.duelLayout = S.layout; showBoard('duel', S.diff); });
     mk('Menu', 'ghost', 'house', () => { duel.send({ type: 'cancel' }); S.duel.inRoom = false; showMenu(); });
     refreshIcons();
     openModal('#m-duel-end');
@@ -734,13 +881,20 @@ function countUp() {
 // ================================================================ classement
 // Catégories : vue d'ensemble, une par forme (Normal / Hardcore / Samouraï), et les duels.
 let boardCache = null;
-const BOARD = { cat: 'overview', diff: 'normal' };
+const BOARD = { cat: 'overview', diff: 'normal', variant: 'classic', duelLayout: 'all' };
+const BOARD_VARIANTS = ['classic', 'timeattack', 'blind'];
 
-function catKey(layout, diff) { return layout + diffOf(diff).suffix; }
+function catKey(layout, diff, variant = BOARD.variant) { return layout + variantOf(variant).suffix + diffOf(diff).suffix; }
+// Duels : un classement par plateau (ou tous les plateaux) et par difficulté
+function duelList(layout = BOARD.duelLayout) {
+  return boardCache && boardCache.duel && !Array.isArray(boardCache.duel) ? boardCache.duel[layout + diffOf(BOARD.diff).suffix] || [] : [];
+}
+function dailyList() { return boardCache && boardCache.daily ? boardCache.daily[boardCache.today] || [] : []; }
 
-async function showBoard(cat = 'overview', diff = BOARD.diff) {
+async function showBoard(cat = 'overview', diff = BOARD.diff, variant = BOARD.variant) {
   BOARD.cat = cat;
   BOARD.diff = DIFFS[diff] ? diff : 'normal';
+  BOARD.variant = BOARD_VARIANTS.includes(variant) ? variant : 'classic';
   openModal('#m-board');
   buildBoardCats();
   $('#board-table').innerHTML = '<tr><td class="empty">Chargement…</td></tr>';
@@ -782,14 +936,16 @@ function buildBoardCats() {
     nav.appendChild(btn);
   };
   add('overview', 'Vue d’ensemble', 'layout-grid', null);
+  add('daily', 'Défi du jour', 'calendar-days', boardCache ? dailyList().length : null);
   let first = true;
   for (const [key, L] of Object.entries(LAYOUTS)) {
     const n = boardCache ? (boardCache[catKey(key, BOARD.diff)] || []).length : null;
     add(key, L.name, L.icon || 'grid-3x3', n, first ? 'Formes' : null);
     first = false;
   }
-  add('duel', 'Duels', 'swords', boardCache ? (boardCache.duel || []).length : null, 'Multijoueur');
+  add('duel', 'Duels', 'swords', boardCache ? duelList().length : null, 'Multijoueur');
   $$('#board-diff button').forEach((x) => x.classList.toggle('active', x.dataset.diff === BOARD.diff));
+  $$('#board-variant button').forEach((x) => x.classList.toggle('active', x.dataset.variant === BOARD.variant));
   refreshIcons();
 }
 
@@ -798,14 +954,18 @@ function renderBoard() {
   const title = $('#board-title');
   title.innerHTML = '';
   const L = LAYOUTS[cat];
-  const meta = cat === 'overview' ? ['Vue d’ensemble', 'layout-grid'] : cat === 'duel' ? ['Duels', 'swords'] : [L.name, L.icon];
+  const meta = cat === 'overview' ? ['Vue d’ensemble', 'layout-grid'] : cat === 'duel' ? ['Duels · ' + (LAYOUTS[BOARD.duelLayout] ? LAYOUTS[BOARD.duelLayout].name : 'tous les plateaux') + ' · ' + diffOf(BOARD.diff).name, 'swords'] : cat === 'daily' ? ['Défi du jour', 'calendar-days'] : [L.name, L.icon];
   title.append(icon(meta[1]), ' ' + meta[0]);
-  if (L) {
+  const smText = L ? L.desc : cat === 'daily' ? (() => { const ch = dailyChallenge(parisDate()); return `${LAYOUTS[ch.layout].name} · ${variantOf(ch.variant).name}`; })() : '';
+  if (smText) {
     const sm = document.createElement('small');
-    sm.textContent = ' · ' + L.desc;
+    sm.textContent = ' · ' + smText;
     title.appendChild(sm);
   }
-  $('#board-diff').classList.toggle('hidden', cat === 'duel');
+  $('#board-diff').classList.toggle('hidden', cat === 'daily');
+  $('#board-duel-layout').classList.toggle('hidden', cat !== 'duel');
+  $('#board-duel-layout').value = BOARD.duelLayout;
+  $('#board-variant').classList.toggle('hidden', cat === 'duel' || cat === 'daily');
   const overview = cat === 'overview';
   $('#board-overview').classList.toggle('hidden', !overview);
   $('#board-wrap').classList.toggle('hidden', overview);
@@ -822,7 +982,7 @@ function renderBoard() {
     return;
   }
   if (overview) renderOverview();
-  else renderTable(cat === 'duel' ? 'duel' : catKey(cat, BOARD.diff), cat === 'duel');
+  else renderTable(cat === 'duel' || cat === 'daily' ? cat : catKey(cat, BOARD.diff), cat === 'duel');
   refreshIcons();
 }
 
@@ -830,12 +990,12 @@ function renderBoard() {
 function renderOverview() {
   const box = $('#board-overview');
   box.innerHTML = '';
-  const cats = [...Object.entries(LAYOUTS).map(([k, L]) => [k, L.name, L.icon]), ['duel', 'Duels', 'swords']];
+  const cats = [['daily', 'Défi du jour', 'calendar-days'], ...Object.entries(LAYOUTS).map(([k, L]) => [k, L.name, L.icon]), ['duel', 'Duels', 'swords']];
   for (const [key, name, ico] of cats) {
-    const list = key === 'duel' ? boardCache.duel || [] : boardCache[catKey(key, BOARD.diff)] || [];
+    const list = key === 'duel' ? duelList('all') : key === 'daily' ? dailyList() : boardCache[catKey(key, BOARD.diff)] || [];
     const card = document.createElement('button');
     card.className = 'ov-card';
-    card.onclick = () => { BOARD.cat = key; buildBoardCats(); renderBoard(); };
+    card.onclick = () => { BOARD.cat = key; if (key === 'duel') BOARD.duelLayout = 'all'; buildBoardCats(); renderBoard(); };
     const head = document.createElement('div');
     head.className = 'ov-head';
     head.append(icon(ico), ' ' + name);
@@ -844,7 +1004,7 @@ function renderOverview() {
       const cv = document.createElement('canvas');
       cv.width = 120;
       cv.height = 60;
-      drawLayoutPreview(cv, LAYOUTS[key].positions);
+      drawLayoutPreview(cv, LAYOUTS[key === 'daily' ? dailyChallenge(parisDate()).layout : key].positions);
       card.appendChild(cv);
     }
     const podium = document.createElement('ol');
@@ -871,11 +1031,12 @@ function renderOverview() {
 
 function renderTable(key, isDuel) {
   const table = $('#board-table');
-  const list = boardCache[key] || [];
+  const list = key === 'daily' ? dailyList() : key === 'duel' ? duelList() : boardCache[key] || [];
+  const timed = key === 'daily' ? dailyChallenge(parisDate()).variant === 'timeattack' : BOARD.variant === 'timeattack';
   table.innerHTML = '';
   const me = (S.pseudo || '').toLowerCase();
   const head = document.createElement('tr');
-  const cols = isDuel ? ['#', 'Pseudo', 'Victoires', 'Défaites', 'Ratio', 'Meilleur temps'] : ['#', 'Pseudo', 'Score', 'Temps', 'Coups', 'Mélanges', 'Date'];
+  const cols = isDuel ? ['#', 'Pseudo', 'Victoires', 'Défaites', 'Ratio', 'Meilleur temps'] : ['#', 'Pseudo', 'Score', timed ? 'Durée' : 'Temps', timed ? 'Restantes' : 'Coups', 'Mélanges', 'Date'];
   for (const c of cols) { const th = document.createElement('th'); th.textContent = c; head.appendChild(th); }
   table.appendChild(head);
   if (!list.length) {
@@ -893,7 +1054,7 @@ function renderTable(key, isDuel) {
     if (e.pseudo.toLowerCase() === me) tr.className = 'me';
     const cells = isDuel
       ? [i + 1, e.pseudo, e.wins, e.losses, Math.round((e.wins / Math.max(1, e.wins + e.losses)) * 100) + ' %', e.best ? fmtTime(e.best) : '—']
-      : [i + 1, e.pseudo, e.score, fmtTime(e.time), e.moves, e.shuffles ?? 0, new Date(e.date).toLocaleDateString('fr-FR')];
+      : [i + 1, e.pseudo, e.score, fmtTime(e.time), timed ? e.remaining || 0 : e.moves, e.shuffles ?? 0, new Date(e.date).toLocaleDateString('fr-FR')];
     const cls = ['rank', 'pseudo', 'score'];
     cells.forEach((v, k) => {
       const td = document.createElement('td');
@@ -1114,6 +1275,15 @@ function selectLayout(key, withSound) {
 }
 
 // ================================================================ difficulté et volumes
+function selectVariant(v, withSound) {
+  S.menuVariant = VARIANTS_UI[v] ? v : 'classic';
+  localStorage.setItem('mj_variant', S.menuVariant);
+  $$('#variant-select button').forEach((b) => b.classList.toggle('active', b.dataset.variant === S.menuVariant));
+  $('#difficulty-select').classList.toggle('muted', S.menuVariant === 'zen');
+  $('#difficulty-select').title = S.menuVariant === 'zen' ? 'En Zen, tout est permis : la difficulté ne compte pas.' : '';
+  if (withSound) { sound.init(); sound.select(); }
+}
+
 function selectDifficulty(diff, withSound) {
   S.difficulty = DIFFS[diff] ? diff : 'normal';
   localStorage.setItem('mj_difficulty', S.difficulty);
@@ -1167,10 +1337,17 @@ function bindUI() {
   $('#btn-solo').onclick = () => {
     sound.init();
     if (!validPseudo()) return;
-    newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo');
+    newGame(S.layout, (Math.random() * 2 ** 31) | 0, 'solo', S.difficulty, S.menuVariant);
   };
+  $('#btn-daily').onclick = startDaily;
+  $$('#variant-select button').forEach((b) => (b.onclick = () => selectVariant(b.dataset.variant, true)));
+  selectVariant(S.menuVariant, false);
+  $$('#board-variant button').forEach((b) => (b.onclick = () => { BOARD.variant = b.dataset.variant; buildBoardCats(); renderBoard(); }));
+  const duelSel = $('#board-duel-layout');
+  duelSel.append(new Option('Tous les plateaux', 'all'), ...Object.entries(LAYOUTS).map(([k, L]) => new Option(L.name, k)));
+  duelSel.onchange = () => { BOARD.duelLayout = duelSel.value; buildBoardCats(); renderBoard(); };
   $('#btn-duel').onclick = () => { sound.init(); openDuel(); };
-  $('#btn-board').onclick = () => showBoard('overview', S.difficulty);
+  $('#btn-board').onclick = () => showBoard('overview', S.difficulty, S.menuVariant);
   $('#btn-rules').onclick = () => { openModal('#m-rules'); loadCredits(); };
   $$('[data-close]').forEach((b) => (b.onclick = () => {
     const modal = b.closest('.modal');
@@ -1213,7 +1390,7 @@ function bindUI() {
   $('#s-undo').onclick = doUndo;
   $('#s-quit').onclick = () => (S.mode === 'solo' ? soloDefeat() : quitGame());
   $('#p-resume').onclick = () => togglePause(false);
-  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.diff); };
+  $('#p-restart').onclick = () => { S.paused = false; newGame(S.layout, S.seed, 'solo', S.diff, S.variant, S.daily); };
   $('#p-quit').onclick = () => { S.paused = false; showMenu(); };
 
   // duel
@@ -1262,8 +1439,15 @@ function bindUI() {
       const now = performance.now();
       S.elapsed += (now - S.lastTick) / 1000;
       S.lastTick = now;
-      $('#h-time').textContent = fmtTime(S.elapsed);
-      if (S.combo > 1 && now - S.lastMatch > COMBO_WINDOW) {
+      updateClock();
+      if (S.run && S.run.timed) {
+        // Contre la montre : tic-tac sur les 10 dernières secondes, puis fin de partie
+        const left = S.run.timeLeft(clock());
+        const sec = Math.ceil(left / 1000);
+        if (sec > 0 && sec <= 10 && sec !== S.lastBeep) { S.lastBeep = sec; sound.tick(); }
+        if (left <= 0) timeUp();
+      }
+      if (S.combo > 1 && S.run && clock() - S.run.lastMatch > COMBO_WINDOW) {
         S.combo = 0;
         $('#h-combo').textContent = '';
       }

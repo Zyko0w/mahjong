@@ -47,6 +47,16 @@
       </div>
 
       <div class="field">
+        <span>Mode</span>
+        <div class="segmented" id="variant-select">
+          <button data-variant="classic"><b><i data-lucide="layers"></i> Classique</b><small>Le solitaire de toujours</small></button>
+          <button data-variant="timeattack"><b><i data-lucide="timer"></i> Contre la montre</b><small>Chaque paire rajoute du temps</small></button>
+          <button data-variant="blind"><b><i data-lucide="eye-off"></i> Aveugle</b><small>Tuiles bloquées cachées · ×1,25</small></button>
+          <button data-variant="zen"><b><i data-lucide="flower-2"></i> Zen</b><small>Ni chrono, ni score</small></button>
+        </div>
+      </div>
+
+      <div class="field">
         <span>Difficulté</span>
         <div class="segmented" id="difficulty-select">
           <button data-diff="normal"><b><i data-lucide="leaf"></i> Normal</b><small>Indices et mélanges libres</small></button>
@@ -58,6 +68,9 @@
       <div class="menu-actions">
         <button class="btn primary big" id="btn-solo">
           <i data-lucide="play"></i> Jouer en solo
+        </button>
+        <button class="btn daily big" id="btn-daily">
+          <i data-lucide="calendar-days"></i><span class="daily-text">Défi du jour<small id="daily-info"></small></span>
         </button>
         <button class="btn jade big" id="btn-duel">
           <i data-lucide="swords"></i> Duel en direct
@@ -81,7 +94,7 @@
   <section id="hud" class="hidden">
     <div class="hud-top">
       <div class="stats">
-        <div class="stat"><small>Temps</small><b id="h-time">00:00</b></div>
+        <div class="stat"><small id="h-time-label">Temps</small><b id="h-time">00:00</b></div>
         <div class="stat"><small>Coups</small><b id="h-moves">0</b></div>
         <div class="stat"><small>Tuiles</small><b id="h-tiles">144</b></div>
         <div class="stat"><small>Paires jouables</small><b id="h-pairs">0</b></div>
@@ -195,6 +208,12 @@
         <div class="board-main">
           <div class="board-head">
             <h3 id="board-title"></h3>
+            <select class="board-select hidden" id="board-duel-layout" title="Plateau du duel"></select>
+            <div class="tabs small" id="board-variant">
+              <button data-variant="classic" class="active"><i data-lucide="layers"></i> Classique</button>
+              <button data-variant="timeattack"><i data-lucide="timer"></i> Contre la montre</button>
+              <button data-variant="blind"><i data-lucide="eye-off"></i> Aveugle</button>
+            </div>
             <div class="tabs small" id="board-diff">
               <button data-diff="normal" class="active"><i data-lucide="leaf"></i> Normal</button>
               <button data-diff="hardcore"><i data-lucide="skull"></i> Hardcore</button>
@@ -220,7 +239,12 @@
         <li><b>Combo :</b> enchaîne les paires en moins de 5 secondes pour multiplier tes points (jusqu'à ×5).</li>
         <li><b>Score :</b> points des paires + bonus de fin + bonus de temps. Indice −30, mélange −80, annulation −20.</li>
         <li><b>Bloqué ?</b> Le mélange redistribue les tuiles restantes en garantissant une solution.</li>
-        <li><b>Duel :</b> même donne pour les deux, le premier à vider le plateau l'emporte.</li>
+        <li><b>Duel :</b> même donne pour les deux, le premier à vider le plateau l'emporte. Le duel se joue toujours en mode Classique.</li>
+        <li><b>Contre la montre :</b> le chrono part de 0,8 s par tuile (1 min minimum) et descend. Chaque paire rajoute 4 s, et 1 s de plus par niveau de combo. À zéro, la partie s'arrête et tes points comptent quand même. Si tu vides le plateau, chaque seconde restante vaut 10 points.</li>
+        <li><b>Aveugle :</b> les tuiles bloquées restent face cachée et se retournent quand elles se libèrent. Score ×1,25.</li>
+        <li><b>Zen :</b> ni chrono ni score, indices et mélanges illimités. Juste toi et les tuiles.</li>
+        <li><b>Défi du jour :</b> la même forme, la même donne et le même mode pour tout le monde, changés chaque jour à minuit. Il a son propre classement, et jouer plusieurs jours d'affilée fait monter ta série.</li>
+        <li><b>Classement vérifié :</b> à la fin de la partie, le serveur rejoue tous tes coups sur la même donne et recalcule lui-même le score.</li>
         <li><b>Samouraï :</b> ni indice ni mélange, seulement ton sabre (et l'annulation de coups). Score ×2, classement à part.</li>
         <li><b>Hardcore :</b> aucun indice et seulement 2 mélanges. Si tu restes bloqué, c'est perdu ! En échange, le score final est multiplié par 1,5 et compte dans un classement à part.</li>
       </ul>

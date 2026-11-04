@@ -443,3 +443,20 @@ svg.lucide { width: 1.15em; height: 1.15em; stroke-width: 2; flex: none; vertica
 .pip-label { position: absolute; left: 8px; top: 7px; font-family: var(--title); font-size: 12px; color: var(--gold-2); background: rgba(10, 20, 16, 0.75); padding: 3px 9px; border-radius: 8px; letter-spacing: 0.06em; }
 .pip-hint { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: rgba(255, 255, 255, 0.6); background: rgba(0, 0, 0, 0.4); padding: 2px 7px; border-radius: 6px; }
 @media (max-width: 760px) { .pip { bottom: 64px; width: 42vw; } }
+
+/* ---------------------------------------------------------------- modes : contre la montre, aveugle, zen, défi du jour */
+#variant-select button b { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; }
+#variant-select button small { font-size: 10px; }
+#variant-select button[data-variant='zen'].active { border-color: #9fd8b8; background: linear-gradient(180deg, rgba(120, 220, 170, 0.18), rgba(120, 220, 170, 0.04)); box-shadow: 0 0 20px rgba(120, 220, 170, 0.18); }
+#variant-select button[data-variant='blind'].active { border-color: #8a7ad8; background: linear-gradient(180deg, rgba(138, 122, 216, 0.22), rgba(138, 122, 216, 0.05)); box-shadow: 0 0 20px rgba(138, 122, 216, 0.2); }
+#variant-select button[data-variant='timeattack'].active { border-color: #f0a020; background: linear-gradient(180deg, rgba(240, 160, 32, 0.22), rgba(240, 160, 32, 0.05)); box-shadow: 0 0 20px rgba(240, 160, 32, 0.2); }
+.segmented.muted { opacity: 0.4; pointer-events: none; filter: grayscale(0.6); }
+.btn.daily { background: linear-gradient(180deg, rgba(240, 199, 106, 0.22), rgba(176, 122, 42, 0.12)); border-color: rgba(240, 199, 106, 0.55); color: var(--gold-2, #f0c76a); }
+.btn.daily .daily-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.btn.daily small { font-family: Inter, sans-serif; font-size: 11px; letter-spacing: 0.02em; color: var(--muted); font-weight: 600; }
+.hardcore-tag.mode { color: #f6dfa6; background: rgba(60, 40, 10, 0.75); border-color: rgba(224, 179, 90, 0.5); }
+#h-time.low { color: #ff6a5a; animation: lowTime 1s ease-in-out infinite; }
+@keyframes lowTime { 50% { transform: scale(1.12); text-shadow: 0 0 18px rgba(255, 90, 70, 0.8); } }
+.board-head { flex-wrap: wrap; gap: 8px; }
+.board-select { background: rgba(0, 0, 0, 0.35); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font: 600 13px Inter, sans-serif; }
+.board-select option { background: #1a1410; }

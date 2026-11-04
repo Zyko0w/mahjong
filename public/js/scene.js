@@ -404,6 +404,29 @@ export class Scene3D {
   }
 
   setBlocked(id, blocked) { const t = this.tiles[id]; if (t) t.blocked = blocked; }
+
+  // Mode Aveugle : une tuile bloquée reste face cachée ; quand elle se libère, elle se retourne.
+  setHidden(id, hidden, face) {
+    const T = this.tiles[id];
+    if (!T) return;
+    T.face = face;
+    if (!!T.hidden === hidden) return;
+    T.hidden = hidden;
+    if (hidden || T.removed) {
+      T.faceMat.map = this.faceTexture(hidden ? 'x' : face);
+      T.faceMat.needsUpdate = true;
+      return;
+    }
+    let swapped = false;
+    this.tween(0.34, (t) => {
+      T.faceMesh.scale.x = Math.max(0.02, Math.abs(Math.cos(Math.PI * t)));
+      if (!swapped && t >= 0.5) {
+        swapped = true;
+        T.faceMat.map = this.faceTexture(T.hidden ? 'x' : T.face);
+        T.faceMat.needsUpdate = true;
+      }
+    }, () => { T.faceMesh.scale.x = 1; });
+  }
   setSelected(id, on) { const t = this.tiles[id]; if (t) t.selected = on; }
   setHovered(id) { this.hovered = id; }
   shake(id) { const t = this.tiles[id]; if (t) t.shake = 0.35; }
@@ -501,7 +524,8 @@ export class Scene3D {
           T.group.rotation.set(0, ease.inOutCubic(t) * Math.PI * 2, Math.sin(Math.PI * t) * 0.4);
           if (!swapped && t >= 0.5) {
             swapped = true;
-            T.faceMat.map = this.faceTexture(game.face(id));
+            T.face = game.face(id);
+            T.faceMat.map = this.faceTexture(T.hidden ? 'x' : T.face);
             T.faceMat.needsUpdate = true;
           }
         }, () => {

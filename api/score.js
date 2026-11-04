@@ -5,7 +5,7 @@ import { blobConfigured, blobEnvHint, updateBoard } from '../lib/blob-store.js';
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   if (typeof req.body === 'string') {
-    if (req.body.length > 2048) throw new Error('trop long');
+    if (req.body.length > 131072) throw new Error('trop long');
     return JSON.parse(req.body);
   }
   return null;
@@ -17,8 +17,8 @@ export default async function handler(req, res) {
   let entry;
   try {
     entry = parseScore(readBody(req));
-  } catch {
-    return res.status(400).json({ error: 'Données invalides' });
+  } catch (e) {
+    return res.status(400).json({ error: 'Partie refusée par le serveur (' + (e && e.message ? e.message : 'données invalides') + ').' });
   }
   try {
     const result = await updateBoard((board) => submitSolo(board, entry));

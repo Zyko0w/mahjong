@@ -51,6 +51,14 @@ Les offres gratuites de Render mettent le serveur en veille après 15 minutes d'
 - **Créer un plateau** : dans `public/js/layouts.js`, chaque forme est dessinée en ASCII, couche par couche (`#` = une tuile). Il faut un nombre pair de tuiles, 144 au maximum. Le plateau apparaît ensuite tout seul dans le menu, le classement et le duel.
 - **HUD** : timer, coups, tuiles restantes, paires jouables, score et combo.
 - **Outils** : indice (H), mélange garanti soluble (M), annulation (Z), caméra (C), pause (Échap).
+- **Modes solo** (choix « Mode » dans le menu) :
+  - **Classique** : le solitaire de toujours.
+  - **Contre la montre** : le chrono descend (0,8 s par tuile au départ, 1 min minimum). Chaque paire rajoute 4 s, et 1 s de plus par niveau de combo. À zéro, la partie s'arrête et les points comptent quand même. Si le plateau est vidé, chaque seconde restante vaut 10 points.
+  - **Aveugle** : les tuiles bloquées restent face cachée et se retournent quand elles se libèrent. Score ×1,25.
+  - **Zen** : ni chrono ni score, indices et mélanges illimités, musique calme. Ce mode n'est pas classé.
+  Contre la montre et Aveugle se combinent avec les difficultés et ont leurs propres classements. Le duel se joue toujours en Classique.
+- **Défi du jour** : la même forme, la même donne et le même mode (Classique, Aveugle ou Contre la montre) pour tout le monde, changés chaque jour à minuit (heure de Paris). Il a son propre classement, et une série compte les jours joués d'affilée. Les réglages viennent de `dailyChallenge()` dans `public/js/rules.js`.
+- **Classement vérifié par rejeu** : en fin de partie, le navigateur envoie la graine de la donne et la liste horodatée des coups. Le serveur rejoue la partie avec les mêmes règles (`public/js/rules.js`, partagé entre le navigateur et le serveur) et recalcule lui-même le score. Un coup impossible, une autre donne, un indice interdit ou des paires jouées à moins de 150 ms d'écart font refuser la partie. Les mélanges sont déterministes (graine de la donne + numéro du mélange) pour que le rejeu tombe juste.
 - **Mode Samouraï** : ni indice ni mélange, score ×2 et classement à part (vérifié par le serveur). Il marche aussi en duel.
 - **Mode Hardcore** : aucun indice et 2 mélanges maximum. Si le plateau reste bloqué, la partie est perdue. Le score final est multiplié par 1,5, et le mode a son propre classement (le serveur vérifie qu'aucun indice n'a été utilisé et qu'il n'y a pas eu plus de 2 mélanges). Il marche aussi en duel.
 - **Transitions** : au lancement d'une partie, des panneaux de laque se ferment, avec un coup de katana, un cri de samouraï, un sceau et un gong. En duel, un écran « VS » rouge contre jade, avec un sabre dégainé et un grand gong au GO.

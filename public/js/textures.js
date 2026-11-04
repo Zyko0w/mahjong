@@ -11,7 +11,7 @@ const P = (nx, ny) => [IX + nx * IW, IY + ny * IH];
 export async function loadFaceFonts() {
   try {
     await Promise.race([
-      document.fonts.load(`900 100px "Noto Serif SC"`, '一二三四五六七八九萬東南西北中發梅蘭菊竹春夏秋冬'),
+      document.fonts.load(`900 100px "Noto Serif SC"`, '一二三四五六七八九萬東南西北中發梅蘭菊竹春夏秋冬隱'),
       new Promise((r) => setTimeout(r, 2000)),
     ]);
   } catch { /* polices système en secours */ }
@@ -236,9 +236,10 @@ export function drawFace(face) {
   cv.width = FACE_W;
   cv.height = FACE_H;
   const ctx = cv.getContext('2d');
-  background(ctx);
   const kind = face[0];
   const v = face.slice(1);
+  if (kind === 'x') return drawHidden(cv, ctx); // mode Aveugle : tuile face cachée
+  background(ctx);
 
   if (kind === 'p') { drawDots(ctx, +v); corner(ctx, v, C.blue); }
   else if (kind === 's') { drawBams(ctx, +v); corner(ctx, v, C.green); }
@@ -277,6 +278,30 @@ export function drawFace(face) {
     glyph(ctx, ch, 128, 176, 150, col);
     corner(ctx, v, col);
   }
+  return cv;
+}
+
+// Face cachée (mode Aveugle) : laque jade, treillis doré et sceau 隱 (« caché »)
+function drawHidden(cv, ctx) {
+  const g = ctx.createLinearGradient(0, 0, FACE_W, FACE_H);
+  g.addColorStop(0, '#1d7a58');
+  g.addColorStop(1, '#0e4a35');
+  ctx.fillStyle = g;
+  rr(ctx, 0, 0, FACE_W, FACE_H, 22);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(224, 179, 90, 0.22)';
+  ctx.lineWidth = 3;
+  for (let k = -FACE_H; k < FACE_W + FACE_H; k += 34) {
+    ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k - FACE_H, FACE_H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k + FACE_H, FACE_H); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(224, 179, 90, 0.75)';
+  ctx.lineWidth = 6;
+  rr(ctx, 18, 18, FACE_W - 36, FACE_H - 36, 16);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(10, 40, 28, 0.85)';
+  ctx.beginPath(); ctx.arc(FACE_W / 2, FACE_H / 2, 62, 0, Math.PI * 2); ctx.fill();
+  glyph(ctx, '隱', FACE_W / 2, FACE_H / 2 + 4, 86, '#e0b35a');
   return cv;
 }
 

@@ -65,7 +65,7 @@ function saveBoard() {
 }
 
 // Résultat de duel : vers le classement Vercel si configuré, sinon dans le fichier local
-async function reportDuel(winner, loser, time) {
+async function reportDuel(winner, loser, time, layout, difficulty) {
   if (LEADERBOARD_URL && DUEL_SECRET) {
     // Plusieurs essais : un résultat de duel ne doit pas se perdre sur une erreur passagère
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -73,7 +73,7 @@ async function reportDuel(winner, loser, time) {
         const r = await fetch(LEADERBOARD_URL + '/api/duel-result', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DUEL_SECRET },
-          body: JSON.stringify({ winner, loser, time }),
+          body: JSON.stringify({ winner, loser, time, layout, difficulty }),
         });
         if (r.ok) return;
         const text = await r.text();
@@ -88,7 +88,7 @@ async function reportDuel(winner, loser, time) {
     return;
   }
   if (LEADERBOARD_URL && !DUEL_SECRET) console.warn('LEADERBOARD_URL défini sans DUEL_SECRET : résultat gardé en local seulement.');
-  recordDuel(board, winner, loser, time);
+  recordDuel(board, winner, loser, time, layout, difficulty);
   saveBoard();
 }
 
@@ -155,7 +155,7 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => {
       body += c;
-      if (body.length > 2048) req.destroy();
+      if (body.length > 131072) req.destroy();
     });
     req.on('end', () => {
       try {
@@ -164,7 +164,7 @@ const server = http.createServer((req, res) => {
         saveBoard();
         sendJSON(res, 200, result);
       } catch (e) {
-        sendJSON(res, 400, { error: 'Données invalides' });
+        sendJSON(res, 400, { error: "Partie refusée par le serveur (" + (e && e.message ? e.message : "données invalides") + ")." });
       }
     });
     return;
@@ -249,7 +249,7 @@ function finishRoom(room, winner, loser, reason) {
   if (room.state !== 'playing') return;
   room.state = 'done';
   const time = Math.max(0, (Date.now() - room.startAt) / 1000);
-  reportDuel(winner.pseudo, loser.pseudo, reason === 'finished' ? time : null);
+  reportDuel(winner.pseudo, loser.pseudo, reason === 'finished' ? time : null, room.layout, room.difficulty);
   const card = (ws) => ({ pseudo: ws.pseudo, ...(ws.stats || {}) });
   const players = { winner: card(winner), loser: card(loser) };
   send(winner, { type: 'result', result: 'win', reason, time, winner: winner.pseudo, players });
