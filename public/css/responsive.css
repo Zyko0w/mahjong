@@ -1,0 +1,48 @@
+/* ================================================================================
+   Échelle de l'interface selon l'écran (petit portable 13-15", écran 24", 27-32" en 1440p ou 4K).
+   --z est calculé dans index.html (script en tête) d'après la taille de la fenêtre :
+   < 1 sur les petites fenêtres, 1 vers 1920×1080, > 1 sur les grands écrans.
+   On l'applique avec `zoom` aux panneaux (pas au canvas 3D, dont les coordonnées doivent rester en px réels).
+   Attention : sous `zoom`, les unités vw/vh sont elles aussi agrandies, d'où les « / var(--z) ».
+   ================================================================================ */
+:root { --z: 1; }
+
+/* ------------------------------------------------ chargement / porte */
+#loader .loader-status, #loader .gate-call { zoom: var(--z); }
+.gate-call { bottom: calc(4vh / var(--z)); }
+
+/* ------------------------------------------------ menu principal */
+#menu .menu-card { zoom: var(--z); }
+.menu-card { width: min(440px, calc(92vw / var(--z))); max-height: calc(96vh / var(--z)); }
+.menu-card.dojo { width: min(1020px, calc(95vw / var(--z))); max-height: calc(94vh / var(--z)); }
+
+/* ------------------------------------------------ fenêtres */
+.modal-card, .duel-end { zoom: var(--z); }
+.modal-card { width: min(520px, calc(94vw / var(--z))); max-height: calc(92vh / var(--z)); }
+.modal-card.wide { width: min(960px, calc(96vw / var(--z))); }
+.rank-board { width: min(1080px, calc(96vw / var(--z))); max-height: calc(94vh / var(--z)); }
+.duel-end { width: min(860px, calc(96vw / var(--z))); max-height: calc(96vh / var(--z)); overflow: auto; }
+.de-banner span { font-size: clamp(38px, calc(7vw / var(--z)), 76px); }
+.board-cats { max-height: calc(64vh / var(--z)); }
+.board-wrap { max-height: calc(56vh / var(--z)); }
+.board-overview { max-height: calc(58vh / var(--z)); }
+.rank-board .board-cats, .rank-board .board-wrap, .rank-board .board-overview { max-height: none; }
+
+/* ------------------------------------------------ HUD en jeu */
+.hud-top, .toolbar, .selected-info, .controls-help, .hardcore-tag { zoom: var(--z); }
+/* left/right sont agrandis par le zoom : on les compense pour garder la même marge à l'écran */
+.hud-top { left: calc(14px / var(--z)); right: calc(14px / var(--z)); top: calc(14px / var(--z)); }
+.pip { width: min(calc(300px * var(--z)), 30vw); right: calc(16px * var(--z)); bottom: calc(96px * var(--z)); border-radius: calc(14px * var(--z)); }
+
+/* ------------------------------------------------ messages, compte à rebours, points flottants */
+#toasts, #now-playing, #countdown { zoom: var(--z); }
+.floater { font-size: calc(26px * var(--z)); }
+.floater.combo-big { font-size: calc(34px * var(--z)); }
+
+/* ------------------------------------------------ fenêtres très basses (portable 15" avec barres du navigateur, fenêtre réduite) */
+@media (min-width: 881px) and (max-height: 760px) {
+  .tablet { gap: 14px; padding-top: 18px; padding-bottom: 18px; }
+  .nobori { padding-top: 18px; padding-bottom: 16px; }
+  .emblem-kanji { font-size: 52px; }
+  .twin-dragons svg.dragon { width: 100px; height: 44px; }
+}

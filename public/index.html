@@ -12,6 +12,26 @@
   <link href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&text=%E9%BA%BB%E5%B0%87%E5%AE%AE%E9%96%8B%E6%A6%9C&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/style.css" />
   <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <script>
+    // Échelle de l'interface (--z, voir responsive.css) : 1 vers 1920×1080, plus petit sur un portable,
+    // plus grand sur un écran 1440p / 4K. Les mises en page mobiles (≤ 880 px) gardent leur taille normale.
+    (function () {
+      var root = document.documentElement;
+      function fit() {
+        var w = innerWidth, h = innerHeight, z = 1;
+        if (w > 880) {
+          var s = Math.min(w / 1920, h / 1080);
+          z = s < 1 ? Math.pow(s, 0.6) : Math.pow(s, 0.9);
+          z = Math.min(z, (h * 0.94) / 800); // le menu (≈ 800 px de haut) tient toujours sans défiler
+          z = Math.max(0.72, Math.min(z, 2.4));
+        }
+        root.style.setProperty('--z', z.toFixed(3));
+      }
+      fit();
+      addEventListener('resize', fit);
+    })();
+  </script>
   <script type="importmap">
     { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
   </script>
