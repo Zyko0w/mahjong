@@ -782,7 +782,7 @@ async function startDaily() {
   sound.init();
   if (dailyDone()) return showBoard('daily');
   if (!validPseudo()) return;
-  const ch = dailyChallenge(parisDate());
+  let ch = dailyChallenge(parisDate());
   const btn = $('#btn-daily');
   btn.disabled = true;
   try {
@@ -795,6 +795,8 @@ async function startDaily() {
       return;
     }
     if (!r.ok) throw new Error(data.error || 'serveur injoignable (' + r.status + ')');
+    // Le serveur impose la date du défi (même donne pour tous, même si l'horloge locale est fausse)
+    if (typeof data.date === 'string' && data.date !== ch.date) ch = dailyChallenge(data.date);
   } catch (e) {
     $('#menu-error').textContent = 'Défi du jour indisponible : ' + (e.message && !/fetch/i.test(e.message) ? e.message : 'serveur injoignable') + '.';
     return;
